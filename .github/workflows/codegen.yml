@@ -1,0 +1,58 @@
+name: codegen
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "sql/**"
+      - "backend/**"   # 你放 CodegenCiRunner 的位置
+      - ".github/workflows/codegen.yml"
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: codegen_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Import SQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+          for f in sql/schema/*.sql; do
+            mysql -h 127.0.0.1 -P 3306 -uroot -proot codegen_db < "$f"
+          done
+
+      - name: Run codegen
+        env:
+          DB_URL: jdbc:mysql://127.0.0.1:3306/codegen_db?useSSL=false&serverTimezone=UTC
+          DB_USER: root
+          DB_PWD: root
+        run: |
+          mvn -q -DskipTests=false -Dtest=CodegenCiRunnerTest test
+
+      - name: Upload generated code
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-code
+          path: generated/
