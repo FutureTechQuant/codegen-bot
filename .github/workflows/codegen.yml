@@ -5,22 +5,19 @@ on:
   push:
     paths:
       - "sql/**"
+      - "tools/**"
       - ".github/workflows/codegen.yml"
 
 jobs:
   gen:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
-    permissions:
-      contents: read
+    timeout-minutes: 60
 
     services:
       mysql:
         image: mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: codegen_db
         ports:
           - 3306:3306
         options: >-
@@ -29,329 +26,41 @@ jobs:
           --health-timeout=5s
           --health-retries=30
 
-    env:
-      ORG: FutureTechQuant
-      RUNNER_REPO: future-codegen-runner
-
-      RUOYI_REPO: YunaiV/ruoyi-vue-pro
-      RUOYI_REF: master-jdk17
-
-      DB_URL: jdbc:mysql://127.0.0.1:3306/codegen_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-      DB_USER: root
-      DB_PWD: root
-
-      CODEGEN_OUTPUT_DIR: ${{ github.workspace }}/out/generated
-      CODEGEN_BASE_PACKAGE: cn.iocoder.yudao
-      CODEGEN_MODULE_NAME: demo
-
     steps:
-      - name: Checkout SQL repo (this repo)
+      - name: Checkout this repo (SQL + tools)
         uses: actions/checkout@v4
 
-      - name: Generate GitHub App installation token (FutureCloneApp)
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: ${{ env.ORG }}
-
-      - name: Ensure runner repo exists (create if missing)
-        env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          API="https://api.github.com"
-          CODE="$(curl -sS -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${APP_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${API}/repos/${ORG}/${RUNNER_REPO}")"
-
-          if [ "${CODE}" = "200" ]; then
-            echo "Repo exists: ${ORG}/${RUNNER_REPO}"
-          else
-            echo "Repo not found, creating: ${ORG}/${RUNNER_REPO}"
-            curl -sS -L -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${APP_TOKEN}" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${API}/orgs/${ORG}/repos" \
-              -d "{\"name\":\"${RUNNER_REPO}\",\"private\":false,\"auto_init\":true}"
-          fi
-
-      - name: Checkout ruoyi-vue-pro (latest master-jdk17)
+      - name: Checkout ruoyi-vue-pro (latest)
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.RUOYI_REPO }}
-          ref: ${{ env.RUOYI_REF }}
+          repository: YunaiV/ruoyi-vue-pro
+          ref: master-jdk17
           path: ruoyi
           fetch-depth: 1
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: maven
-          cache-dependency-path: |
-            ruoyi/pom.xml
-            ruoyi/yudao-module-infra/yudao-module-infra-biz/pom.xml
+          cache-dependency-path: ruoyi/pom.xml
 
-      - name: Import SQL (business tables)
+      - name: Install mysql-client
         run: |
           sudo apt-get update
           sudo apt-get install -y mysql-client
-          for f in sql/schema/*.sql; do
-            echo "Importing $f"
-            mysql -h 127.0.0.1 -P 3306 -uroot -proot codegen_db < "$f"
-          done
 
-      - name: Write CI codegen test into ruoyi-vue-pro
-        run: |
-          set -euo pipefail
-          TEST_DIR="ruoyi/yudao-module-infra/yudao-module-infra-biz/src/test/java/cn/iocoder/yudao/module/infra/service/codegen"
-          mkdir -p "${TEST_DIR}"
-          cat > "${TEST_DIR}/CiCodegenTest.java" << 'EOF'
-          package cn.iocoder.yudao.module.infra.service.codegen;
-
-          import cn.iocoder.yudao.module.infra.dal.dataobject.codegen.CodegenColumnDO;
-          import cn.iocoder.yudao.module.infra.dal.dataobject.codegen.CodegenTableDO;
-          import cn.iocoder.yudao.module.infra.enums.codegen.CodegenFrontTypeEnum;
-          import cn.iocoder.yudao.module.infra.enums.codegen.CodegenSceneEnum;
-          import cn.iocoder.yudao.module.infra.enums.codegen.CodegenTemplateTypeEnum;
-          import cn.iocoder.yudao.module.infra.framework.codegen.config.CodegenProperties;
-          import cn.iocoder.yudao.module.infra.service.codegen.inner.CodegenEngine;
-          import org.junit.jupiter.api.Test;
-
-          import java.lang.reflect.Field;
-          import java.lang.reflect.Method;
-          import java.math.BigDecimal;
-          import java.nio.charset.StandardCharsets;
-          import java.nio.file.Files;
-          import java.nio.file.Path;
-          import java.sql.*;
-          import java.time.LocalDate;
-          import java.time.LocalDateTime;
-          import java.util.*;
-
-          public class CiCodegenTest {
-
-              @Test
-              public void generate() throws Exception {
-                  String url = getenv("DB_URL");
-                  String user = getenv("DB_USER");
-                  String pwd = getenv("DB_PWD");
-                  String outDir = getenv("CODEGEN_OUTPUT_DIR");
-                  String basePackage = getenv("CODEGEN_BASE_PACKAGE");
-                  String moduleName = getenv("CODEGEN_MODULE_NAME");
-                  String tablesCsv = System.getenv("CODEGEN_TABLES"); // optional
-
-                  CodegenEngine engine = new CodegenEngine();
-                  CodegenProperties props = new CodegenProperties();
-                  setIfPresent(props, "setBasePackage", basePackage);
-                  setIfPresent(props, "setUnitTestEnable", Boolean.FALSE);
-
-                  Field f = CodegenEngine.class.getDeclaredField("codegenProperties");
-                  f.setAccessible(true);
-                  f.set(engine, props);
-
-                  Method init = CodegenEngine.class.getDeclaredMethod("initGlobalBindingMap");
-                  init.setAccessible(true);
-                  init.invoke(engine);
-
-                  List<String> tableNames;
-                  try (Connection conn = DriverManager.getConnection(url, user, pwd)) {
-                      tableNames = (tablesCsv == null || tablesCsv.isBlank())
-                              ? listAllTables(conn, "codegen_db")
-                              : Arrays.stream(tablesCsv.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
-
-                      for (String tableName : tableNames) {
-                          String tableComment = getTableComment(conn, "codegen_db", tableName);
-                          List<CodegenColumnDO> columns = listColumns(conn, "codegen_db", tableName);
-
-                          CodegenTableDO table = new CodegenTableDO();
-                          setIfPresent(table, "setTableName", tableName);
-                          setIfPresent(table, "setComment", tableComment);
-
-                          table.setModuleName(moduleName);
-                          table.setBusinessName(toBusinessName(tableName, moduleName));
-                          table.setClassName(toClassName(table.getBusinessName()));
-
-                          table.setFrontType(CodegenFrontTypeEnum.VUE3.getType());
-                          table.setTemplateType(pickSimpleTemplateType());
-                          table.setScene(pickScene());
-
-                          Map<String, String> files = engine.execute(table, columns, Collections.emptyList(), Collections.emptyList());
-                          writeAll(outDir, files);
-                      }
-                  }
-              }
-
-              private static Integer pickSimpleTemplateType() {
-                  // 避免树表/主子表，优先找名字里带 SIMPLE 的，否则取第一个
-                  for (CodegenTemplateTypeEnum e : CodegenTemplateTypeEnum.values()) {
-                      if (e.name().toUpperCase(Locale.ROOT).contains("SIMPLE")) {
-                          return e.getType();
-                      }
-                  }
-                  return CodegenTemplateTypeEnum.values()[0].getType();
-              }
-
-              private static Integer pickScene() {
-                  // 取第一个场景即可（生成路径里会用到 basePackage/prefixClass 等）
-                  return CodegenSceneEnum.values()[0].getScene();
-              }
-
-              private static List<String> listAllTables(Connection conn, String schema) throws SQLException {
-                  List<String> list = new ArrayList<>();
-                  try (PreparedStatement ps = conn.prepareStatement(
-                          "select table_name from information_schema.tables where table_schema = ? and table_type='BASE TABLE'")) {
-                      ps.setString(1, schema);
-                      try (ResultSet rs = ps.executeQuery()) {
-                          while (rs.next()) list.add(rs.getString(1));
-                      }
-                  }
-                  return list;
-              }
-
-              private static String getTableComment(Connection conn, String schema, String table) throws SQLException {
-                  try (PreparedStatement ps = conn.prepareStatement(
-                          "select table_comment from information_schema.tables where table_schema=? and table_name=?")) {
-                      ps.setString(1, schema);
-                      ps.setString(2, table);
-                      try (ResultSet rs = ps.executeQuery()) {
-                          if (rs.next()) return rs.getString(1);
-                      }
-                  }
-                  return "";
-              }
-
-              private static List<CodegenColumnDO> listColumns(Connection conn, String schema, String table) throws SQLException {
-                  List<CodegenColumnDO> list = new ArrayList<>();
-                  try (PreparedStatement ps = conn.prepareStatement(
-                          "select column_name, data_type, column_key, is_nullable, column_comment " +
-                          "from information_schema.columns where table_schema=? and table_name=? order by ordinal_position")) {
-                      ps.setString(1, schema);
-                      ps.setString(2, table);
-                      try (ResultSet rs = ps.executeQuery()) {
-                          while (rs.next()) {
-                              String columnName = rs.getString(1);
-                              String dataType = rs.getString(2);
-                              boolean pk = "PRI".equalsIgnoreCase(rs.getString(3));
-                              boolean nullable = "YES".equalsIgnoreCase(rs.getString(4));
-                              String comment = rs.getString(5);
-
-                              CodegenColumnDO c = new CodegenColumnDO();
-                              setIfPresent(c, "setColumnName", columnName);
-                              setIfPresent(c, "setComment", comment);
-
-                              c.setJavaField(toJavaField(columnName));
-                              c.setJavaType(mapJavaType(dataType));
-                              c.setPrimaryKey(pk);
-                              setIfPresent(c, "setNullable", nullable);
-
-                              list.add(c);
-                          }
-                      }
-                  }
-                  return list;
-              }
-
-              private static void writeAll(String outDir, Map<String, String> files) throws Exception {
-                  Path base = Path.of(outDir);
-                  for (Map.Entry<String, String> e : files.entrySet()) {
-                      Path p = base.resolve(e.getKey());
-                      Files.createDirectories(p.getParent());
-                      Files.writeString(p, e.getValue(), StandardCharsets.UTF_8);
-                  }
-              }
-
-              private static String toBusinessName(String tableName, String moduleName) {
-                  // demo_user => user（可按你表前缀规则自行改）
-                  String prefix = moduleName + "_";
-                  if (tableName.startsWith(prefix)) return tableName.substring(prefix.length());
-                  return tableName;
-              }
-
-              private static String toClassName(String name) {
-                  StringBuilder sb = new StringBuilder();
-                  for (String part : name.split("_")) {
-                      if (part.isEmpty()) continue;
-                      sb.append(part.substring(0, 1).toUpperCase(Locale.ROOT)).append(part.substring(1));
-                  }
-                  return sb.toString();
-              }
-
-              private static String toJavaField(String name) {
-                  String cls = toClassName(name);
-                  return cls.substring(0, 1).toLowerCase(Locale.ROOT) + cls.substring(1);
-              }
-
-              private static String mapJavaType(String mysqlType) {
-                  String t = mysqlType.toLowerCase(Locale.ROOT);
-                  return switch (t) {
-                      case "varchar", "char", "text", "longtext", "mediumtext", "tinytext" -> String.class.getName();
-                      case "bigint" -> Long.class.getName();
-                      case "int", "integer", "mediumint", "smallint", "tinyint" -> Integer.class.getName();
-                      case "decimal", "numeric" -> BigDecimal.class.getName();
-                      case "datetime", "timestamp" -> LocalDateTime.class.getName();
-                      case "date" -> LocalDate.class.getName();
-                      case "double" -> Double.class.getName();
-                      case "float" -> Float.class.getName();
-                      default -> String.class.getName();
-                  };
-              }
-
-              private static String getenv(String k) {
-                  String v = System.getenv(k);
-                  if (v == null || v.isBlank()) throw new IllegalArgumentException("Missing env: " + k);
-                  return v;
-              }
-
-              private static void setIfPresent(Object target, String methodName, Object arg) {
-                  try {
-                      for (Method m : target.getClass().getMethods()) {
-                          if (m.getName().equals(methodName) && m.getParameterCount() == 1) {
-                              m.invoke(target, arg);
-                              return;
-                          }
-                      }
-                  } catch (Exception ignored) {}
-              }
-          }
-          EOF
-
-      - name: Run codegen (JUnit test)
+      - name: Run codegen (per sql/schema/*.sql)
         env:
-          DB_URL: ${{ env.DB_URL }}
-          DB_USER: ${{ env.DB_USER }}
-          DB_PWD: ${{ env.DB_PWD }}
-          CODEGEN_OUTPUT_DIR: ${{ env.CODEGEN_OUTPUT_DIR }}
-          CODEGEN_BASE_PACKAGE: ${{ env.CODEGEN_BASE_PACKAGE }}
-          CODEGEN_MODULE_NAME: ${{ env.CODEGEN_MODULE_NAME }}
-          # 可选：CODEGEN_TABLES: demo_user,demo_order
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3306
+          MYSQL_USER: root
+          MYSQL_PWD: root
         run: |
-          set -euo pipefail
-          rm -rf out/generated && mkdir -p out/generated
-          mvn -q -f ruoyi/pom.xml -pl yudao-module-infra/yudao-module-infra-biz -am -Dtest=CiCodegenTest test
+          bash tools/codegen/run.sh
 
-      - name: Push generated code to runner repo
-        env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          test -d out/generated
-          cd out/generated
-          git init -q
-          git config user.name "FutureCloneApp[bot]"
-          git config user.email "FutureCloneApp[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "chore(codegen): update generated code" || true
-          git branch -M main
-          git remote add origin "https://x-access-token:${APP_TOKEN}@github.com/${ORG}/${RUNNER_REPO}.git"
-          git push -u origin main --force
-
-      - name: Upload generated code (artifact)
+      - name: Upload generated code
         uses: actions/upload-artifact@v4
         with:
           name: generated-code
