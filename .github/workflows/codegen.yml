@@ -38,8 +38,6 @@ jobs:
         with:
           repository: FutureTechQuant/future-codegen-runner
           path: runner
-          # 如果 runner 是 public，可删除 token 这一行
-          token: ${{ secrets.RUNNER_REPO_TOKEN }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
