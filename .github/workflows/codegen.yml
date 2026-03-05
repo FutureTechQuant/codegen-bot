@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "sql/**"
+      - "backend/**"
       - ".github/workflows/codegen.yml"
 
 jobs:
@@ -29,17 +30,55 @@ jobs:
           --health-retries=20
 
     env:
-      RUNNER_REPO_URL: https://github.com/FutureTechQuant/future-codegen-runner.git
-      RUNNER_REF: main
+      ORG: FutureTechQuant
+      RUNNER_REPO: future-codegen-runner
+      RUOYI_REPO: YunaiV/ruoyi-vue-pro
+      RUOYI_REF: master-jdk17
 
     steps:
-      - name: Checkout sql repo
+      - name: Checkout this repo (SQL + backend runner)
         uses: actions/checkout@v4
 
-      - name: Clone runner repo (public)
+      - name: Generate GitHub App installation token (FutureCloneApp)
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ env.ORG }}
+
+      - name: Ensure runner repo exists (create if missing)
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git clone --depth 1 --branch "${RUNNER_REF}" "${RUNNER_REPO_URL}" runner
-          ls -la runner
+          set -euo pipefail
+          API="https://api.github.com"
+
+          CODE="$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${APP_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${API}/repos/${ORG}/${RUNNER_REPO}")"
+
+          if [ "${CODE}" = "200" ]; then
+            echo "Repo exists: ${ORG}/${RUNNER_REPO}"
+            exit 0
+          fi
+
+          echo "Repo not found, creating: ${ORG}/${RUNNER_REPO}"
+          curl -sS -L -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${APP_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${API}/orgs/${ORG}/repos" \
+            -d "{\"name\":\"${RUNNER_REPO}\",\"private\":false,\"auto_init\":true}"
+
+      - name: Checkout ruoyi-vue-pro (master-jdk17)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.RUOYI_REPO }}
+          ref: ${{ env.RUOYI_REF }}
+          path: ruoyi
+          fetch-depth: 1
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -47,7 +86,9 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: maven
-          cache-dependency-path: runner/pom.xml
+          cache-dependency-path: |
+            backend/pom.xml
+            ruoyi/pom.xml
 
       - name: Import SQL
         run: |
@@ -57,14 +98,33 @@ jobs:
             mysql -h 127.0.0.1 -P 3306 -uroot -proot codegen_db < "$f"
           done
 
-      - name: Run codegen
+      - name: Run codegen runner (your backend project)
         env:
           DB_URL: jdbc:mysql://127.0.0.1:3306/codegen_db?useSSL=false&serverTimezone=UTC
           DB_USER: root
           DB_PWD: root
+          RUOYI_DIR: ${{ github.workspace }}/ruoyi
           CODEGEN_OUTPUT_DIR: ${{ github.workspace }}/out/generated
         run: |
-          mvn -q -f runner/pom.xml -DskipTests=false -Dtest=CodegenCiRunnerTest test
+          test -f backend/pom.xml || (echo "Missing backend/pom.xml" && exit 2)
+          mvn -q -f backend/pom.xml -DskipTests=false -Dtest=CodegenCiRunnerTest test
+
+      - name: Push generated code to runner repo
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          test -d out/generated || (echo "Missing out/generated" && exit 3)
+
+          cd out/generated
+          git init -q
+          git config user.name "FutureCloneApp[bot]"
+          git config user.email "FutureCloneApp[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(codegen): update generated code" || true
+          git branch -M main
+          git remote add origin "https://x-access-token:${APP_TOKEN}@github.com/${ORG}/${RUNNER_REPO}.git"
+          git push -u origin main --force
 
       - name: Upload generated code
         uses: actions/upload-artifact@v4
