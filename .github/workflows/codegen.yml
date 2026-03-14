@@ -66,7 +66,7 @@ jobs:
       - name: Install runtime tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y mysql-client python3 redis-tools
+          sudo apt-get install -y mysql-client python3 redis-tools git
 
       - name: Wait Redis
         run: |
@@ -99,6 +99,14 @@ jobs:
           REDIS_PORT: 6379
         run: |
           bash tools/codegen/run.sh
+
+      - name: Publish generated code
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_OWNER: FutureTechQuant
+          BACKEND_BRANCH: master-jdk17
+        run: |
+          bash tools/codegen/publish.sh
 
       - name: Upload generated code
         uses: actions/upload-artifact@v5
