@@ -66,9 +66,17 @@ jobs:
         run: |
           bash tools/codegen/run.sh
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: FutureTechQuant
+      
       - name: Publish generated code
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_OWNER: FutureTechQuant
         run: |
           bash tools/codegen/publish.sh
