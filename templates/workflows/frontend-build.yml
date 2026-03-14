@@ -32,6 +32,28 @@ jobs:
           npm config set registry https://registry.npmmirror.com
           npm install
 
+      - name: Auto fix generated files
+        run: |
+          if [ ! -f generated-manifest.json ]; then
+            echo "No generated-manifest.json found, skip auto-fix"
+            exit 0
+          fi
+
+          DIRS=$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('generated-manifest.json','utf8')); console.log((m.frontend_dirs||[]).join('\n'));")
+
+          if [ -z "${DIRS}" ]; then
+            echo "No generated frontend dirs found in manifest"
+            exit 0
+          fi
+
+          while IFS= read -r dir; do
+            [ -n "${dir}" ] || continue
+            if [ -d "${dir}" ]; then
+              echo "Fixing ${dir}"
+              npx eslint "${dir}/**/*.{vue,js,ts}" --fix --no-error-on-unmatched-pattern
+            fi
+          done <<< "${DIRS}"
+
       - name: Build
         run: |
           BUILD_SCRIPT=$(node -e "const s=require('./package.json').scripts||{}; if (s['build:prod']) console.log('build:prod'); else if (s['build']) console.log('build');")
