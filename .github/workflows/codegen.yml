@@ -3,9 +3,11 @@ name: codegen
 on:
   workflow_dispatch:
   push:
+    branches: [ master-jdk17 ]
     paths:
       - "sql/**"
       - "tools/**"
+      - "templates/**"
       - ".github/workflows/codegen.yml"
 
 permissions:
