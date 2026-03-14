@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: codegen-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gen:
     runs-on: ubuntu-latest
@@ -68,12 +72,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mysql-client python3 redis-tools git
 
+      - name: Wait MySQL
+        run: |
+          for i in $(seq 1 60); do
+            mysqladmin ping -h 127.0.0.1 -proot --silent && exit 0
+            sleep 2
+          done
+          echo "MySQL not ready"
+          exit 1
+
       - name: Wait Redis
         run: |
           for i in $(seq 1 30); do
             redis-cli -h 127.0.0.1 -p 6379 ping | grep -q PONG && exit 0
             sleep 2
           done
+          echo "Redis not ready"
           exit 1
 
       - name: Generate GitHub App token
@@ -109,7 +123,10 @@ jobs:
           bash tools/codegen/publish.sh
 
       - name: Upload generated code
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: generated-code
           path: out/generated
+          if-no-files-found: error
+          retention-days: 7
