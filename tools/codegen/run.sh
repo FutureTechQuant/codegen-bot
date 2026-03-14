@@ -48,17 +48,23 @@ fi
 mysql_exec "${CODEGEN_DB_NAME}" < "${BASE_SQL}"
 
 echo "== import business sql from this repo =="
-shopt -s nullglob
-SQL_FILES=("${ROOT_DIR}"/sql/*.sql)
-if [[ ${#SQL_FILES[@]} -eq 0 ]]; then
-  echo "ERROR: no sql files found under ${ROOT_DIR}/sql"
+SQL_ROOT="${ROOT_DIR}/sql/schema"
+if [[ ! -d "${SQL_ROOT}" ]]; then
+  echo "ERROR: missing business sql dir: ${SQL_ROOT}"
   exit 1
 fi
+
+mapfile -t SQL_FILES < <(find "${SQL_ROOT}" -type f -name '*.sql' | sort)
+
+if [[ ${#SQL_FILES[@]} -eq 0 ]]; then
+  echo "ERROR: no sql files found under ${SQL_ROOT}"
+  exit 1
+fi
+
 for f in "${SQL_FILES[@]}"; do
   echo "import -> ${f}"
   mysql_exec "${CODEGEN_DB_NAME}" < "${f}"
 done
-shopt -u nullglob
 
 echo "== install integration test into ruoyi =="
 mkdir -p "${RUOYI_DIR}/yudao-server/src/test/java/ci/codegen"
