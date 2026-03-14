@@ -84,6 +84,7 @@ echo "BOOTSTRAP_SQL=${BOOTSTRAP_SQL}"
 
 TEST_DIR="${RUOYI_DIR}/${MODULE_DIR}/src/test/java/ci/codegen"
 mkdir -p "${TEST_DIR}"
+cp -f "${ROOT}/tools/codegen/CiImportCodegenMetaTest.java" "${TEST_DIR}/CiImportCodegenMetaTest.java"
 cp -f "${ROOT}/tools/codegen/CiCodegenTest.java" "${TEST_DIR}/CiCodegenTest.java"
 
 mkdir -p "${OUT_DIR}"
@@ -122,18 +123,16 @@ for f in "${sql_files[@]}"; do
   "${mysql_base[@]}" "${db}" < "${f}"
 
   echo "==> verify infra codegen tables exist"
-  "${mysql_base[@]}" -D "${db}" -e "
-    SELECT COUNT(*) AS cnt
+  infra_cnt="$("${mysql_base[@]}" -N -D "${db}" -e "
+    SELECT COUNT(*)
     FROM information_schema.tables
     WHERE table_schema = '${db}'
       AND table_name IN ('infra_codegen_table', 'infra_codegen_column');
-  " | tail -n 1 | {
-    read -r cnt
-    if [[ "${cnt}" != "2" ]]; then
-      echo "ERROR: infra_codegen_table / infra_codegen_column not found in ${db}"
-      exit 21
-    fi
-  }
+  ")"
+  if [[ "${infra_cnt}" != "2" ]]; then
+    echo "ERROR: infra_codegen_table / infra_codegen_column not found in ${db}"
+    exit 21
+  fi
 
   echo "==> candidate business tables"
   "${mysql_base[@]}" -D "${db}" -e "
@@ -144,6 +143,22 @@ for f in "${sql_files[@]}"; do
       AND table_name LIKE '${module}\_%'
     ORDER BY table_name;
   " || true
+
+  export DB_URL="jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${db}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+  export DB_USER="${MYSQL_USER}"
+  export DB_PWD="${MYSQL_PWD}"
+  export CODEGEN_MODULE_NAME="${module}"
+  export CODEGEN_TABLE_PREFIX="${module}_"
+  export CODEGEN_ENGINE_CLASS="${ENGINE_CLASS}"
+  export CODEGEN_OUTPUT_DIR="${OUT_DIR}/${module}"
+  export CODEGEN_BASE_PACKAGE="${CODEGEN_BASE_PACKAGE}"
+
+  echo "==> import business tables into infra_codegen_*"
+  mvn -B -q -f "${RUOYI_DIR}/pom.xml" \
+    -pl "${MODULE_DIR}" \
+    -Dtest=ci.codegen.CiImportCodegenMetaTest \
+    -Dsurefire.failIfNoSpecifiedTests=false \
+    test
 
   echo "==> preview codegen metadata counts"
   "${mysql_base[@]}" -D "${db}" -e "
@@ -162,19 +177,10 @@ for f in "${sql_files[@]}"; do
     ORDER BY id;
   " || true
 
-  export DB_URL="jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${db}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
-  export DB_USER="${MYSQL_USER}"
-  export DB_PWD="${MYSQL_PWD}"
-  export CODEGEN_MODULE_NAME="${module}"
-  export CODEGEN_TABLE_PREFIX="${module}_"
-  export CODEGEN_ENGINE_CLASS="${ENGINE_CLASS}"
-  export CODEGEN_OUTPUT_DIR="${OUT_DIR}/${module}"
-  export CODEGEN_BASE_PACKAGE="${CODEGEN_BASE_PACKAGE}"
-
   rm -rf "${CODEGEN_OUTPUT_DIR}"
   mkdir -p "${CODEGEN_OUTPUT_DIR}"
 
-  echo "==> run codegen test"
+  echo "==> run codegen generate"
   mvn -B -q -f "${RUOYI_DIR}/pom.xml" \
     -pl "${MODULE_DIR}" \
     -Dtest=ci.codegen.CiCodegenTest \
