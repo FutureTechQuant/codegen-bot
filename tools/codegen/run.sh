@@ -82,7 +82,10 @@ ls -l "${RUOYI_DIR}/yudao-server/src/test/resources/application-ci-codegen.yaml"
 
 echo "== run codegen integration test =="
 cd "${RUOYI_DIR}"
-mvn -pl yudao-server -am -Dtest=ci.codegen.CiCodegenIT test
+mvn -pl yudao-server -am \
+  -Dtest=ci.codegen.CiCodegenIT \
+  -Dsurefire.failIfNoSpecifiedTests=false \
+  test
 
 echo "== generated files =="
 find "${CODEGEN_OUTPUT_DIR}" -type f | sort || true
