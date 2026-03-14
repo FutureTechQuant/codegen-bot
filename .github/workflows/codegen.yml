@@ -71,13 +71,9 @@ jobs:
       - name: Wait Redis
         run: |
           for i in $(seq 1 30); do
-            if redis-cli -h 127.0.0.1 -p 6379 ping | grep -q PONG; then
-              echo "Redis is ready"
-              exit 0
-            fi
+            redis-cli -h 127.0.0.1 -p 6379 ping | grep -q PONG && exit 0
             sleep 2
           done
-          echo "Redis is not ready"
           exit 1
 
       - name: Generate GitHub App token
@@ -103,16 +99,6 @@ jobs:
           REDIS_PORT: 6379
         run: |
           bash tools/codegen/run.sh
-
-      - name: Debug unreplaced template variables
-        run: |
-          set -euo pipefail
-          echo "== search unreplaced template variables in generated output =="
-          if grep -R '\${' -n out/generated; then
-            echo "WARNING: found unreplaced template variables in generated files"
-          else
-            echo "OK: no unreplaced template variables found under out/generated"
-          fi
 
       - name: Upload generated code
         uses: actions/upload-artifact@v5
