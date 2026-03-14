@@ -80,6 +80,38 @@ echo "== verify copied files =="
 ls -l "${RUOYI_DIR}/yudao-server/src/test/java/ci/codegen/CiCodegenIT.java"
 ls -l "${RUOYI_DIR}/yudao-server/src/test/resources/application-ci-codegen.yaml"
 
+echo "== patch yudao-server pom with test deps =="
+python3 - <<'PY'
+from pathlib import Path
+
+pom = Path("ruoyi/yudao-server/pom.xml")
+text = pom.read_text(encoding="utf-8")
+
+marker = "</dependencies>"
+block = """
+        <!-- added by future-codegen-bot for CI integration test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+"""
+
+if "spring-boot-starter-test" not in text:
+    if marker not in text:
+        raise SystemExit("ERROR: </dependencies> not found in yudao-server/pom.xml")
+    text = text.replace(marker, block + "\n    " + marker, 1)
+    pom.write_text(text, encoding="utf-8")
+PY
+
+echo "== verify pom patch =="
+grep -n "spring-boot-starter-test\\|junit-jupiter" "${RUOYI_DIR}/yudao-server/pom.xml" || true
+
 echo "== run codegen integration test =="
 cd "${RUOYI_DIR}"
 mvn -pl yudao-server -am \
