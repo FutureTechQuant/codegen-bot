@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 from pathlib import Path
 
@@ -90,26 +91,45 @@ def ensure_server_dependency(backend_root: Path, module_name: str) -> None:
     server_pom.write_text(updated, encoding="utf-8")
 
 
-def sync_frontend(generated_dir: Path, frontend_root: Path) -> None:
+def collect_frontend_manifest_dirs(src_dir: Path) -> list[str]:
+    result: set[str] = set()
+    for top in sorted(p for p in src_dir.iterdir() if p.is_dir()):
+        children = sorted(p for p in top.iterdir() if p.is_dir())
+        if children:
+            for child in children:
+                result.add(str(Path("src") / top.name / child.name))
+        else:
+            result.add(str(Path("src") / top.name))
+    return sorted(result)
+
+
+def sync_frontend(generated_dir: Path, frontend_root: Path) -> list[str]:
     src_dirs = find_frontend_src_dirs(generated_dir)
     target_src = frontend_root / "src"
     target_src.mkdir(parents=True, exist_ok=True)
 
+    frontend_dirs: set[str] = set()
+
     if not src_dirs:
         print("No generated frontend src found")
-        return
+        return []
 
     for src_dir in src_dirs:
         copy_tree_contents(src_dir, target_src)
+        for rel_dir in collect_frontend_manifest_dirs(src_dir):
+            frontend_dirs.add(rel_dir)
         print(f"Synced frontend src from {src_dir}")
 
+    return sorted(frontend_dirs)
 
-def sync_backend(generated_dir: Path, backend_root: Path) -> None:
+
+def sync_backend(generated_dir: Path, backend_root: Path) -> list[str]:
     modules = find_backend_modules(generated_dir)
+    backend_modules: list[str] = []
 
     if not modules:
         print("No generated backend modules found")
-        return
+        return backend_modules
 
     for module_dir in modules:
         module_name = module_dir.name
@@ -121,7 +141,10 @@ def sync_backend(generated_dir: Path, backend_root: Path) -> None:
         ensure_root_module_declared(backend_root, module_name)
         ensure_server_dependency(backend_root, module_name)
 
+        backend_modules.append(module_name)
         print(f"Synced backend module {module_name}")
+
+    return backend_modules
 
 
 def copy_file(src: Path, dst: Path) -> None:
@@ -140,6 +163,19 @@ def sync_workflow_templates(project_root: Path, backend_root: Path, frontend_roo
 
     copy_file(frontend_template, frontend_root / ".github" / "workflows" / "frontend-build.yml")
     print(f"Synced frontend workflow from {frontend_template}")
+
+
+def write_manifest(repo_root: Path, frontend_dirs: list[str], backend_modules: list[str]) -> None:
+    manifest = {
+        "frontend_dirs": frontend_dirs,
+        "backend_modules": backend_modules,
+    }
+    manifest_path = repo_root / "generated-manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Wrote manifest to {manifest_path}")
 
 
 def main() -> None:
@@ -161,9 +197,12 @@ def main() -> None:
     if not frontend_root.exists():
         raise FileNotFoundError(f"frontend root not found: {frontend_root}")
 
-    sync_frontend(generated_dir, frontend_root)
-    sync_backend(generated_dir, backend_root)
+    frontend_dirs = sync_frontend(generated_dir, frontend_root)
+    backend_modules = sync_backend(generated_dir, backend_root)
     sync_workflow_templates(project_root, backend_root, frontend_root)
+
+    write_manifest(frontend_root, frontend_dirs, backend_modules)
+    write_manifest(backend_root, frontend_dirs, backend_modules)
 
 
 if __name__ == "__main__":
