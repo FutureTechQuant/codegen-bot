@@ -39,7 +39,7 @@ public class CiImportCodegenMetaTest {
             Integer templateType = pickSimpleTemplateType();
             Integer frontType = resolveVue3FrontType();
             Integer scene = CodegenSceneEnum.values()[0].getScene();
-            Long dataSourceConfigId = resolveDataSourceConfigId(conn);
+            Long dataSourceConfigId = resolveOrCreateDataSourceConfigId(conn, schema, url, user, pwd);
 
             for (TableMeta table : businessTables) {
                 long tableId = insertCodegenTable(
@@ -320,7 +320,11 @@ public class CiImportCodegenMetaTest {
         throw new IllegalStateException("Failed to retrieve inserted id for " + tableName);
     }
 
-    private static Long resolveDataSourceConfigId(Connection conn) throws SQLException {
+    private static Long resolveOrCreateDataSourceConfigId(Connection conn,
+                                                      String schema,
+                                                      String jdbcUrl,
+                                                      String username,
+                                                      String password) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT id FROM infra_data_source_config ORDER BY id LIMIT 1")) {
             try (ResultSet rs = ps.executeQuery()) {
@@ -329,8 +333,62 @@ public class CiImportCodegenMetaTest {
                 }
             }
         }
-        throw new IllegalStateException("No rows found in infra_data_source_config");
+    
+        Set<String> cols = loadTableColumns(conn, schema, "infra_data_source_config");
+        LinkedHashMap<String, Object> values = new LinkedHashMap<>();
+    
+        Timestamp now = new Timestamp(System.currentTimeMillis());
+    
+        putIfHas(cols, values, "name", "ci-codegen");
+        putIfHas(cols, values, "remark", "auto created for codegen ci");
+        putIfHas(cols, values, "url", jdbcUrl);
+        putIfHas(cols, values, "jdbc_url", jdbcUrl);
+        putIfHas(cols, values, "username", username);
+        putIfHas(cols, values, "password", password);
+        putIfHas(cols, values, "db_type", "MySQL");
+        putIfHas(cols, values, "database_type", "MySQL");
+        putIfHas(cols, values, "status", 0);
+        putIfHas(cols, values, "deleted", 0);
+        putIfHas(cols, values, "tenant_id", 0L);
+        putIfHas(cols, values, "creator", "ci");
+        putIfHas(cols, values, "updater", "ci");
+        putIfHas(cols, values, "create_time", now);
+        putIfHas(cols, values, "update_time", now);
+    
+        if (values.isEmpty()) {
+            throw new IllegalStateException("No insertable columns found for infra_data_source_config");
+        }
+    
+        String columns = String.join(", ", values.keySet());
+        String placeholders = String.join(", ", Collections.nCopies(values.size(), "?"));
+        String sql = "INSERT INTO infra_data_source_config (" + columns + ") VALUES (" + placeholders + ")";
+    
+        try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            int idx = 1;
+            for (Object v : values.values()) {
+                ps.setObject(idx++, v);
+            }
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        }
+    
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT id FROM infra_data_source_config WHERE name = ? ORDER BY id LIMIT 1")) {
+            ps.setString(1, "ci-codegen");
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        }
+    
+        throw new IllegalStateException("Failed to create infra_data_source_config row");
     }
+
 
     private static Integer resolveVue3FrontType() {
         try {
