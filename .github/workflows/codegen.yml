@@ -117,6 +117,10 @@ jobs:
           MYSQL_PORT: 3306
           MYSQL_USER: root
           MYSQL_PWD: root
+          CODEGEN_DB_NAME: ruoyi-vue-pro
+          CODEGEN_MODULE_NAME: talent
+          CODEGEN_TABLE_PREFIX: talent_
+          CODEGEN_OUTPUT_DIR: ${{ github.workspace }}/out/generated
           CODEGEN_BASE_PACKAGE: cn.iocoder.yudao
         run: |
           bash tools/codegen/run.sh
