@@ -39,11 +39,12 @@ public class CiImportCodegenMetaTest {
             Integer templateType = pickSimpleTemplateType();
             Integer frontType = resolveVue3FrontType();
             Integer scene = CodegenSceneEnum.values()[0].getScene();
+            Long dataSourceConfigId = resolveDataSourceConfigId(conn);
 
             for (TableMeta table : businessTables) {
                 long tableId = insertCodegenTable(
                         conn, codegenTableCols, table, moduleName, basePackage, tablePrefix,
-                        templateType, frontType, scene
+                        templateType, frontType, scene, dataSourceConfigId
                 );
 
                 List<ColumnMeta> columns = listColumns(conn, schema, table.tableName);
@@ -185,7 +186,8 @@ public class CiImportCodegenMetaTest {
                                            String tablePrefix,
                                            Integer templateType,
                                            Integer frontType,
-                                           Integer scene) throws SQLException {
+                                           Integer scene,
+                                           Long dataSourceConfigId) throws SQLException {
         String tableName = table.tableName;
         String tableComment = table.tableComment;
         String className = toClassName(tableName);
@@ -200,6 +202,7 @@ public class CiImportCodegenMetaTest {
         putIfHas(existingCols, values, "class_comment", tableComment);
         putIfHas(existingCols, values, "author", "future-codegen-bot");
         putIfHas(existingCols, values, "template_type", templateType);
+        putIfHas(existingCols, values, "data_source_config_id", dataSourceConfigId);
         putIfHas(existingCols, values, "module_name", moduleName);
         putIfHas(existingCols, values, "business_name", businessName);
         putIfHas(existingCols, values, "package_name", packageName);
@@ -315,6 +318,18 @@ public class CiImportCodegenMetaTest {
         }
 
         throw new IllegalStateException("Failed to retrieve inserted id for " + tableName);
+    }
+
+    private static Long resolveDataSourceConfigId(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT id FROM infra_data_source_config ORDER BY id LIMIT 1")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+            }
+        }
+        throw new IllegalStateException("No rows found in infra_data_source_config");
     }
 
     private static Integer resolveVue3FrontType() {
