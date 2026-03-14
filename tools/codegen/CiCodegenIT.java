@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
         classes = YudaoServerApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.NONE
 )
-@ActiveProfiles("ci-codegen")
+@ActiveProfiles({"local", "ci-codegen"})
 public class CiCodegenIT {
 
     @Resource
@@ -50,7 +50,6 @@ public class CiCodegenIT {
         String dbPwd = mustEnv("DB_PWD");
         String outDir = mustEnv("CODEGEN_OUTPUT_DIR");
         String moduleName = mustEnv("CODEGEN_MODULE_NAME");
-        String basePackage = mustEnv("CODEGEN_BASE_PACKAGE");
         String tablePrefix = System.getenv().getOrDefault("CODEGEN_TABLE_PREFIX", moduleName + "_");
 
         try (Connection conn = dataSource.getConnection()) {
@@ -81,7 +80,7 @@ public class CiCodegenIT {
                 CodegenTableDO table = codegenTableMapper.selectById(tableId);
                 assertNotNull(table, "Imported codegen table missing: " + tableId);
 
-                normalizeTable(table, moduleName, basePackage, tablePrefix);
+                normalizeTable(table, moduleName, tablePrefix);
                 codegenTableMapper.updateById(table);
 
                 Map<String, String> files = codegenService.generationCodes(tableId);
@@ -96,32 +95,31 @@ public class CiCodegenIT {
         System.out.println("codegenProperties.frontType = " + codegenProperties.getFrontType());
     }
 
-    private static void normalizeTable(CodegenTableDO table, String moduleName, String basePackage, String tablePrefix) {
-            table.setScene(CodegenSceneEnum.ADMIN.getScene());
-        
-            if (table.getFrontType() == null) {
-                table.setFrontType(CodegenFrontTypeEnum.VUE3_ELEMENT_PLUS.getType());
-            }
-            if (table.getTemplateType() == null) {
-                table.setTemplateType(CodegenTemplateTypeEnum.ONE.getType());
-            }
-            if (isBlank(table.getModuleName())) {
-                table.setModuleName(moduleName);
-            }
-            if (isBlank(table.getBusinessName()) && !isBlank(table.getTableName())) {
-                table.setBusinessName(stripPrefix(table.getTableName(), tablePrefix));
-            }
-            if (isBlank(table.getClassName()) && !isBlank(table.getTableName())) {
-                table.setClassName(toClassName(table.getTableName()));
-            }
-            if (isBlank(table.getAuthor())) {
-                table.setAuthor("ci-codegen");
-            }
-            if (table.getParentMenuId() == null) {
-                table.setParentMenuId(0L);
-            }
-        }
+    private static void normalizeTable(CodegenTableDO table, String moduleName, String tablePrefix) {
+        table.setScene(CodegenSceneEnum.ADMIN.getScene());
 
+        if (table.getFrontType() == null) {
+            table.setFrontType(CodegenFrontTypeEnum.VUE3_ELEMENT_PLUS.getType());
+        }
+        if (table.getTemplateType() == null) {
+            table.setTemplateType(CodegenTemplateTypeEnum.ONE.getType());
+        }
+        if (isBlank(table.getModuleName())) {
+            table.setModuleName(moduleName);
+        }
+        if (isBlank(table.getBusinessName()) && !isBlank(table.getTableName())) {
+            table.setBusinessName(stripPrefix(table.getTableName(), tablePrefix));
+        }
+        if (isBlank(table.getClassName()) && !isBlank(table.getTableName())) {
+            table.setClassName(toClassName(table.getTableName()));
+        }
+        if (isBlank(table.getAuthor())) {
+            table.setAuthor("ci-codegen");
+        }
+        if (table.getParentMenuId() == null) {
+            table.setParentMenuId(0L);
+        }
+    }
 
     private static void assertNoUnresolvedTemplateVars(String tableName, Map<String, String> files) {
         List<String> badFiles = files.entrySet().stream()
