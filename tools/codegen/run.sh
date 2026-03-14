@@ -26,7 +26,7 @@ user=${MYSQL_USER}
 password=${MYSQL_PWD}
 EOF
 chmod 600 "${MYCNF}"
-mysql_base=(mysql --defaults-file="${MYCNF}")
+mysql_base=(mysql --defaults-file="${MYCNF}" --default-character-set=utf8mb4)
 
 cd "${RUOYI_DIR}"
 
@@ -61,6 +61,38 @@ if [[ ${#sql_files[@]} -eq 0 ]]; then
   exit 20
 fi
 
+find_bootstrap_sql() {
+  local candidates=(
+    "${RUOYI_DIR}/sql/mysql/ruoyi-vue-pro.sql"
+    "${RUOYI_DIR}/sql/mysql/ruoyi-vue-pro-with-demo.sql"
+    "${RUOYI_DIR}/sql/mysql/ruoyi-vue-pro-no-demo.sql"
+  )
+
+  local f=""
+  for f in "${candidates[@]}"; do
+    if [[ -f "${f}" ]]; then
+      echo "${f}"
+      return 0
+    fi
+  done
+
+  f="$(find "${RUOYI_DIR}/sql" -type f \( -name 'ruoyi-vue-pro.sql' -o -name 'ruoyi-vue-pro-with-demo.sql' -o -name 'ruoyi-vue-pro-no-demo.sql' \) | head -n 1 || true)"
+  if [[ -n "${f}" ]]; then
+    echo "${f}"
+    return 0
+  fi
+
+  return 1
+}
+
+BOOTSTRAP_SQL="$(find_bootstrap_sql || true)"
+if [[ -z "${BOOTSTRAP_SQL}" ]]; then
+  echo "ERROR: cannot find ruoyi bootstrap sql under ${RUOYI_DIR}/sql"
+  exit 21
+fi
+
+echo "BOOTSTRAP_SQL=${BOOTSTRAP_SQL}"
+
 "${mysql_base[@]}" -e "SELECT 1" >/dev/null
 
 echo "==> install module and upstream dependencies into local m2"
@@ -73,11 +105,32 @@ mvn -B -q -f "${RUOYI_DIR}/pom.xml" \
 for f in "${sql_files[@]}"; do
   module="$(basename "${f}" .sql)"
   db="codegen_${module}"
+
   echo "==> module=${module}, db=${db}, sql=${f}"
 
   "${mysql_base[@]}" -e "DROP DATABASE IF EXISTS \`${db}\`;"
-  "${mysql_base[@]}" -e "CREATE DATABASE \`${db}\` DEFAULT CHARACTER SET utf8mb4;"
+  "${mysql_base[@]}" -e "CREATE DATABASE \`${db}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+  echo "==> import ruoyi bootstrap sql"
+  "${mysql_base[@]}" "${db}" < "${BOOTSTRAP_SQL}"
+
+  echo "==> import business sql"
   "${mysql_base[@]}" "${db}" < "${f}"
+
+  echo "==> verify codegen tables"
+  "${mysql_base[@]}" -D "${db}" -e "
+    SELECT 'infra_codegen_table' AS table_name, COUNT(*) AS cnt FROM infra_codegen_table
+    UNION ALL
+    SELECT 'infra_codegen_column' AS table_name, COUNT(*) AS cnt FROM infra_codegen_column;
+  "
+
+  echo "==> preview latest codegen metadata"
+  "${mysql_base[@]}" -D "${db}" -e "
+    SELECT id, table_name, table_comment, class_name, class_comment, module_name, business_name
+    FROM infra_codegen_table
+    ORDER BY id DESC
+    LIMIT 20;
+  " || true
 
   export DB_URL="jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${db}?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
   export DB_USER="${MYSQL_USER}"
@@ -90,11 +143,19 @@ for f in "${sql_files[@]}"; do
   rm -rf "${CODEGEN_OUTPUT_DIR}"
   mkdir -p "${CODEGEN_OUTPUT_DIR}"
 
+  echo "==> run codegen test"
   mvn -B -q -f "${RUOYI_DIR}/pom.xml" \
     -pl "${MODULE_DIR}" \
     -Dtest=ci.codegen.CiCodegenTest \
     -Dsurefire.failIfNoSpecifiedTests=false \
     test
+
+  echo "==> scan unreplaced template variables"
+  if grep -R '\${' -n "${CODEGEN_OUTPUT_DIR}"; then
+    echo "WARNING: found unreplaced template variables under ${CODEGEN_OUTPUT_DIR}"
+  else
+    echo "OK: no unreplaced template variables under ${CODEGEN_OUTPUT_DIR}"
+  fi
 done
 
 echo "Generated under ${OUT_DIR}"
