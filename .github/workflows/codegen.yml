@@ -51,7 +51,7 @@ jobs:
           cache: maven
           cache-dependency-path: ruoyi/pom.xml
 
-      - name: Install mysql-client
+      - name: Install runtime tools
         run: |
           sudo apt-get update
           sudo apt-get install -y mysql-client python3
@@ -74,11 +74,109 @@ jobs:
         run: |
           bash tools/codegen/run.sh
 
-      - name: Recreate target repos and publish generated code
+      - name: Recreate target repos from Gitee
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_OWNER: FutureTechQuant
           TARGET_REPO_VISIBILITY: private
+          RECREATE_TIMEOUT_SECONDS: 900
+        run: |
+          set -euo pipefail
+
+          OWNER="${GITHUB_OWNER}"
+          VISIBILITY="${TARGET_REPO_VISIBILITY:-private}"
+          TIMEOUT_SECONDS="${RECREATE_TIMEOUT_SECONDS:-900}"
+
+          BACKEND_REPO="ruoyi-vue-pro"
+          FRONTEND_REPO="yudao-ui-admin-vue3"
+
+          BACKEND_UPSTREAM="https://gitee.com/zhijiantianya/ruoyi-vue-pro.git"
+          FRONTEND_UPSTREAM="https://gitee.com/yudaocode/yudao-ui-admin-vue3.git"
+
+          git config --global user.name "future-codegen-bot"
+          git config --global user.email "actions@users.noreply.github.com"
+
+          repo_url() {
+            local repo="$1"
+            echo "https://x-access-token:${GH_TOKEN}@github.com/${OWNER}/${repo}.git"
+          }
+
+          wait_until_deleted() {
+            local repo="$1"
+            local deadline=$((SECONDS + TIMEOUT_SECONDS))
+
+            while gh repo view "${OWNER}/${repo}" >/dev/null 2>&1; do
+              if (( SECONDS >= deadline )); then
+                echo "ERROR: timeout waiting delete for ${OWNER}/${repo}"
+                exit 1
+              fi
+              sleep 5
+            done
+          }
+
+          create_repo_with_retry() {
+            local repo="$1"
+            local deadline=$((SECONDS + TIMEOUT_SECONDS))
+            local log="/tmp/create-${repo}.log"
+
+            while true; do
+              rm -f "${log}"
+
+              if [[ "${VISIBILITY}" == "public" ]]; then
+                if gh repo create "${OWNER}/${repo}" --public >"${log}" 2>&1; then
+                  return
+                fi
+              else
+                if gh repo create "${OWNER}/${repo}" --private >"${log}" 2>&1; then
+                  return
+                fi
+              fi
+
+              if grep -q "Name already exists on this account" "${log}"; then
+                if (( SECONDS >= deadline )); then
+                  cat "${log}"
+                  echo "ERROR: timeout waiting name reusable for ${OWNER}/${repo}"
+                  exit 1
+                fi
+                sleep 10
+                continue
+              fi
+
+              cat "${log}"
+              echo "ERROR: create repo failed: ${OWNER}/${repo}"
+              exit 1
+            done
+          }
+
+          recreate_from_upstream() {
+            local repo="$1"
+            local upstream="$2"
+            local seed_dir="${RUNNER_TEMP}/seed-${repo}"
+
+            echo "==> recreate ${OWNER}/${repo}"
+
+            if gh repo view "${OWNER}/${repo}" >/dev/null 2>&1; then
+              gh repo delete "${OWNER}/${repo}" --yes
+            fi
+
+            wait_until_deleted "${repo}"
+            create_repo_with_retry "${repo}"
+
+            rm -rf "${seed_dir}"
+            git clone "${upstream}" "${seed_dir}"
+
+            git -C "${seed_dir}" remote remove origin || true
+            git -C "${seed_dir}" remote add origin "$(repo_url "${repo}")"
+            git -C "${seed_dir}" push -u origin HEAD
+          }
+
+          recreate_from_upstream "${BACKEND_REPO}" "${BACKEND_UPSTREAM}"
+          recreate_from_upstream "${FRONTEND_REPO}" "${FRONTEND_UPSTREAM}"
+
+      - name: Publish generated code
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_OWNER: FutureTechQuant
         run: |
           bash tools/codegen/publish.sh
 
