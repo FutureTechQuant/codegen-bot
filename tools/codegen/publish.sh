@@ -123,12 +123,12 @@ bootstrap_repo_from_gitee() {
   # 删掉 Gitee 的 .git，只保留工作区文件
   rm -rf "${tmp_work}/.git"
 
-  # 在 tmp_init 里初始化一个新的 Git 仓库，内容来自 tmp_work
+  # 在 tmp_init 里初始化一个新的 Git 仓库，分支名直接用 gitee_branch
   echo "==> Prepare initial Git history for ${repo}"
   cp -R "${tmp_work}/." "${tmp_init}/"
 
   cd "${tmp_init}"
-  git init -b main
+  git init -b "${gitee_branch}"
   git add -A
   git commit -m "chore: bootstrap from Gitee ${gitee_branch}"
 
@@ -136,8 +136,8 @@ bootstrap_repo_from_gitee() {
   create_repo "${repo}" "${description}" true
 
   git remote add origin "$(repo_url "${repo}")"
-  echo "==> Push initial snapshot to GitHub ${OWNER}/${repo}"
-  git push -u origin main
+  echo "==> Push initial snapshot to GitHub ${OWNER}/${repo} (${gitee_branch})"
+  git push -u origin "${gitee_branch}"
 }
 
 clone_target() {
@@ -148,6 +148,7 @@ clone_target() {
   rm -rf "${dir}"
 
   if [[ -n "${branch}" ]]; then
+    # 先检测远端是否有指定分支
     if git ls-remote --heads "$(repo_url "${repo}")" "${branch}" >/dev/null 2>&1; then
       echo "Cloning ${repo} branch ${branch}"
       git clone --branch "${branch}" --single-branch "$(repo_url "${repo}")" "${dir}"
