@@ -10,6 +10,7 @@ MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_USER="${MYSQL_USER:-root}"
 MYSQL_PWD="${MYSQL_PWD:-root}"
+CODEGEN_BASE_PACKAGE="${CODEGEN_BASE_PACKAGE:-cn.iocoder.yudao}"
 
 cleanup() {
   rm -f "${MYCNF:-}"
@@ -84,6 +85,7 @@ for f in "${sql_files[@]}"; do
   export CODEGEN_MODULE_NAME="${module}"
   export CODEGEN_ENGINE_CLASS="${ENGINE_CLASS}"
   export CODEGEN_OUTPUT_DIR="${OUT_DIR}/${module}"
+  export CODEGEN_BASE_PACKAGE="${CODEGEN_BASE_PACKAGE}"
 
   rm -rf "${CODEGEN_OUTPUT_DIR}"
   mkdir -p "${CODEGEN_OUTPUT_DIR}"
