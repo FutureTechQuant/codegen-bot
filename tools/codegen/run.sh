@@ -20,7 +20,7 @@ DB_USER="${DB_USER:-${MYSQL_USER}}"
 DB_PWD="${DB_PWD:-${MYSQL_PWD}}"
 
 export DB_URL DB_USER DB_PWD
-export CODEGEN_OUTPUT_DIR CODEGEN_MODULE_NAME CODEGEN_TABLE_PREFIX CODEGEN_BASE_PACKAGE
+export CODEGEN_DB_NAME CODEGEN_OUTPUT_DIR CODEGEN_MODULE_NAME CODEGEN_TABLE_PREFIX CODEGEN_BASE_PACKAGE
 
 mysql_exec() {
   MYSQL_PWD="${MYSQL_PWD}" mysql \
@@ -114,10 +114,19 @@ grep -n "spring-boot-starter-test\\|junit-jupiter" "${RUOYI_DIR}/yudao-server/po
 
 echo "== run codegen integration test =="
 cd "${RUOYI_DIR}"
-mvn -pl yudao-server -am \
+if ! mvn -pl yudao-server -am \
   -Dtest=ci.codegen.CiCodegenIT \
   -Dsurefire.failIfNoSpecifiedTests=false \
-  test
+  test; then
+  echo "== surefire reports =="
+  find yudao-server/target/surefire-reports -maxdepth 1 -type f | sort | while read -r f; do
+    echo "--------------------------------------------------"
+    echo "FILE: $f"
+    echo "--------------------------------------------------"
+    sed -n '1,240p' "$f" || true
+  done
+  exit 1
+fi
 
 echo "== generated files =="
 find "${CODEGEN_OUTPUT_DIR}" -type f | sort || true
