@@ -8,6 +8,7 @@ WORK_DIR="${ROOT}/out/publish"
 OWNER="${GITHUB_OWNER:-FutureTechQuant}"
 BACKEND_REPO="ruoyi-vue-pro"
 FRONTEND_REPO="yudao-ui-admin-vue3"
+BACKEND_BRANCH="${BACKEND_BRANCH:-master-jdk17}"
 
 require_env() {
   local name="$1"
@@ -31,9 +32,14 @@ mkdir -p "${WORK_DIR}"
 clone_target() {
   local repo="$1"
   local dir="$2"
+  local branch="${3:-}"
 
   rm -rf "${dir}"
-  git clone "$(repo_url "${repo}")" "${dir}"
+  if [[ -n "${branch}" ]]; then
+    git clone --branch "${branch}" --single-branch "$(repo_url "${repo}")" "${dir}"
+  else
+    git clone "$(repo_url "${repo}")" "${dir}"
+  fi
 }
 
 find_generated_frontend_src_dirs() {
@@ -173,6 +179,7 @@ sync_backend_generated() {
 commit_and_push() {
   local dir="$1"
   local msg="$2"
+  local branch="${3:-}"
 
   cd "${dir}"
   git add -A
@@ -183,14 +190,19 @@ commit_and_push() {
   fi
 
   git commit -m "${msg}"
-  git push origin HEAD
+
+  if [[ -n "${branch}" ]]; then
+    git push -u origin "HEAD:${branch}"
+  else
+    git push origin HEAD
+  fi
 }
 
 BACKEND_DIR="${WORK_DIR}/${BACKEND_REPO}"
 FRONTEND_DIR="${WORK_DIR}/${FRONTEND_REPO}"
 
 echo "==> Clone target repositories"
-clone_target "${BACKEND_REPO}" "${BACKEND_DIR}"
+clone_target "${BACKEND_REPO}" "${BACKEND_DIR}" "${BACKEND_BRANCH}"
 clone_target "${FRONTEND_REPO}" "${FRONTEND_DIR}"
 
 echo "==> Sync generated frontend"
@@ -200,7 +212,7 @@ echo "==> Sync generated backend"
 sync_backend_generated "${BACKEND_DIR}"
 
 echo "==> Commit and push"
-commit_and_push "${BACKEND_DIR}" "chore: sync generated backend code"
+commit_and_push "${BACKEND_DIR}" "chore: sync generated backend code" "${BACKEND_BRANCH}"
 commit_and_push "${FRONTEND_DIR}" "chore: sync generated frontend code"
 
 echo "Done"
