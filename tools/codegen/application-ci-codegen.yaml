@@ -1,17 +1,52 @@
 spring:
+  autoconfigure:
+    exclude:
+      - com.alibaba.druid.spring.boot.autoconfigure.DruidDataSourceAutoConfigure
+      - org.springframework.boot.autoconfigure.quartz.QuartzAutoConfiguration
+      - de.codecentric.boot.admin.server.config.AdminServerAutoConfiguration
+      - de.codecentric.boot.admin.server.ui.config.AdminServerUiAutoConfiguration
+      - de.codecentric.boot.admin.client.config.SpringBootAdminClientAutoConfiguration
+      - org.springframework.ai.autoconfigure.vectorstore.qdrant.QdrantVectorStoreAutoConfiguration
+      - org.springframework.ai.autoconfigure.vectorstore.milvus.MilvusVectorStoreAutoConfiguration
+
+  cache:
+    type: SIMPLE
+
+  data:
+    redis:
+      repositories:
+        enabled: false
+
   datasource:
     dynamic:
       primary: master
       strict: false
       datasource:
         master:
+          name: ${CODEGEN_DB_NAME:ruoyi-vue-pro}
+          url: ${DB_URL}
+          username: ${DB_USER}
+          password: ${DB_PWD}
+          driver-class-name: com.mysql.cj.jdbc.Driver
+        slave:
+          lazy: true
+          name: slave
           url: ${DB_URL}
           username: ${DB_USER}
           password: ${DB_PWD}
           driver-class-name: com.mysql.cj.jdbc.Driver
 
 yudao:
+  captcha:
+    enable: false
+  security:
+    mock-enable: true
+  access-log:
+    enable: false
+  demo: false
   codegen:
+    base-package: cn.iocoder.yudao
+    db-schemas: ${CODEGEN_DB_NAME:ruoyi-vue-pro}
     vo-type: 10
     unit-test-enable: false
     front-type: 20
