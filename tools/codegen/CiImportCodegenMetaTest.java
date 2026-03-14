@@ -57,12 +57,12 @@ public class CiImportCodegenMetaTest {
   }
 
   private static void ensureInfraTableExists(Connection conn, String schema, String tableName) throws SQLException {
-    try (PreparedStatement ps = conn.prepareStatement("""
-        SELECT COUNT(*)
-        FROM information_schema.tables
-        WHERE table_schema = ?
-          AND table_name = ?
-        """)) {
+    String sql =
+        "SELECT COUNT(*) " +
+        "FROM information_schema.tables " +
+        "WHERE table_schema = ? AND table_name = ?";
+
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
       ps.setString(1, schema);
       ps.setString(2, tableName);
       try (ResultSet rs = ps.executeQuery()) {
@@ -75,15 +75,16 @@ public class CiImportCodegenMetaTest {
   }
 
   private static List<TableMeta> listBusinessTables(Connection conn, String schema, String tablePrefix) throws SQLException {
+    String sql =
+        "SELECT table_name, table_comment " +
+        "FROM information_schema.tables " +
+        "WHERE table_schema = ? " +
+        "  AND table_type = 'BASE TABLE' " +
+        "  AND table_name LIKE ? " +
+        "ORDER BY table_name";
+
     List<TableMeta> list = new ArrayList<>();
-    try (PreparedStatement ps = conn.prepareStatement("""
-        SELECT table_name, table_comment
-        FROM information_schema.tables
-        WHERE table_schema = ?
-          AND table_type = 'BASE TABLE'
-          AND table_name LIKE ?
-        ORDER BY table_name
-        """)) {
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
       ps.setString(1, schema);
       ps.setString(2, tablePrefix + "%");
       try (ResultSet rs = ps.executeQuery()) {
@@ -99,14 +100,14 @@ public class CiImportCodegenMetaTest {
   }
 
   private static List<ColumnMeta> listColumns(Connection conn, String schema, String tableName) throws SQLException {
+    String sql =
+        "SELECT column_name, data_type, column_key, is_nullable, column_comment, ordinal_position " +
+        "FROM information_schema.columns " +
+        "WHERE table_schema = ? AND table_name = ? " +
+        "ORDER BY ordinal_position";
+
     List<ColumnMeta> list = new ArrayList<>();
-    try (PreparedStatement ps = conn.prepareStatement("""
-        SELECT column_name, data_type, column_key, is_nullable, column_comment, ordinal_position
-        FROM information_schema.columns
-        WHERE table_schema = ?
-          AND table_name = ?
-        ORDER BY ordinal_position
-        """)) {
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
       ps.setString(1, schema);
       ps.setString(2, tableName);
       try (ResultSet rs = ps.executeQuery()) {
@@ -126,14 +127,14 @@ public class CiImportCodegenMetaTest {
   }
 
   private static Set<String> loadTableColumns(Connection conn, String schema, String tableName) throws SQLException {
+    String sql =
+        "SELECT column_name " +
+        "FROM information_schema.columns " +
+        "WHERE table_schema = ? AND table_name = ? " +
+        "ORDER BY ordinal_position";
+
     Set<String> cols = new LinkedHashSet<>();
-    try (PreparedStatement ps = conn.prepareStatement("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = ?
-          AND table_name = ?
-        ORDER BY ordinal_position
-        """)) {
+    try (PreparedStatement ps = conn.prepareStatement(sql)) {
       ps.setString(1, schema);
       ps.setString(2, tableName);
       try (ResultSet rs = ps.executeQuery()) {
@@ -147,11 +148,11 @@ public class CiImportCodegenMetaTest {
 
   private static void purgeExisting(Connection conn, String tablePrefix) throws SQLException {
     List<Long> ids = new ArrayList<>();
-    try (PreparedStatement ps = conn.prepareStatement("""
-        SELECT id
-        FROM infra_codegen_table
-        WHERE table_name LIKE ?
-        """)) {
+
+    String selectSql =
+        "SELECT id FROM infra_codegen_table WHERE table_name LIKE ?";
+
+    try (PreparedStatement ps = conn.prepareStatement(selectSql)) {
       ps.setString(1, tablePrefix + "%");
       try (ResultSet rs = ps.executeQuery()) {
         while (rs.next()) {
@@ -162,8 +163,8 @@ public class CiImportCodegenMetaTest {
 
     if (!ids.isEmpty()) {
       String inSql = String.join(",", Collections.nCopies(ids.size(), "?"));
-      try (PreparedStatement ps = conn.prepareStatement(
-          "DELETE FROM infra_codegen_column WHERE table_id IN (" + inSql + ")")) {
+      String deleteColumnSql = "DELETE FROM infra_codegen_column WHERE table_id IN (" + inSql + ")";
+      try (PreparedStatement ps = conn.prepareStatement(deleteColumnSql)) {
         for (int i = 0; i < ids.size(); i++) {
           ps.setLong(i + 1, ids.get(i));
         }
@@ -171,10 +172,10 @@ public class CiImportCodegenMetaTest {
       }
     }
 
-    try (PreparedStatement ps = conn.prepareStatement("""
-        DELETE FROM infra_codegen_table
-        WHERE table_name LIKE ?
-        """)) {
+    String deleteTableSql =
+        "DELETE FROM infra_codegen_table WHERE table_name LIKE ?";
+
+    try (PreparedStatement ps = conn.prepareStatement(deleteTableSql)) {
       ps.setString(1, tablePrefix + "%");
       ps.executeUpdate();
     }
@@ -269,9 +270,11 @@ public class CiImportCodegenMetaTest {
     if (values.isEmpty()) {
       throw new IllegalStateException("No insertable values for table " + table);
     }
+
     String columns = String.join(", ", values.keySet());
     String placeholders = String.join(", ", Collections.nCopies(values.size(), "?"));
     String sql = "INSERT INTO " + table + " (" + columns + ") VALUES (" + placeholders + ")";
+
     try (PreparedStatement ps = conn.prepareStatement(sql)) {
       int idx = 1;
       for (Object v : values.values()) {
@@ -287,9 +290,11 @@ public class CiImportCodegenMetaTest {
     if (values.isEmpty()) {
       throw new IllegalStateException("No insertable values for table " + table);
     }
+
     String columns = String.join(", ", values.keySet());
     String placeholders = String.join(", ", Collections.nCopies(values.size(), "?"));
     String sql = "INSERT INTO " + table + " (" + columns + ") VALUES (" + placeholders + ")";
+
     try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
       int idx = 1;
       for (Object v : values.values()) {
@@ -303,5 +308,8 @@ public class CiImportCodegenMetaTest {
       }
     }
 
-    try (PreparedStatement ps = conn.prepareStatement("""
-        SELECT id FROM infra_codegen_table WHERE
+    String selectIdSql = "SELECT id FROM infra_codegen_table WHERE table_name = ?";
+    try (PreparedStatement ps = conn.prepareStatement(selectIdSql)) {
+      ps.setString(1, tableName);
+      try (ResultSet rs = ps.executeQuery()) {
+        if (rs.next())
