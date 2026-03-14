@@ -73,14 +73,20 @@ ensure_root_module_declared() {
 
   grep -q "<module>${module_name}</module>" "${root_pom}" && return
 
-  python3 - <<PY
+  ROOT_POM="${root_pom}" MODULE_NAME="${module_name}" python3 <<'PY'
 from pathlib import Path
-p = Path(r"${root_pom}")
+import os
+
+p = Path(os.environ["ROOT_POM"])
+module_name = os.environ["MODULE_NAME"]
 s = p.read_text(encoding="utf-8")
-insert = f"        <module>${module_name}</module>\n"
+
+insert = f"        <module>{module_name}</module>\n"
 needle = "</modules>"
+
 if needle in s and insert.strip() not in s:
     s = s.replace(needle, insert + "    </modules>", 1)
+
 p.write_text(s, encoding="utf-8")
 PY
 }
@@ -92,20 +98,26 @@ ensure_server_dependency() {
 
   grep -q "<artifactId>${module_name}</artifactId>" "${server_pom}" && return
 
-  python3 - <<PY
+  SERVER_POM="${server_pom}" MODULE_NAME="${module_name}" python3 <<'PY'
 from pathlib import Path
-p = Path(r"${server_pom}")
+import os
+
+p = Path(os.environ["SERVER_POM"])
+module_name = os.environ["MODULE_NAME"]
 s = p.read_text(encoding="utf-8")
+
 block = f"""
         <dependency>
             <groupId>cn.iocoder.boot</groupId>
-            <artifactId>${module_name}</artifactId>
+            <artifactId>{module_name}</artifactId>
             <version>${{revision}}</version>
         </dependency>
 """
 needle = "</dependencies>"
-if needle in s and f"<artifactId>${module_name}</artifactId>" not in s:
+
+if needle in s and f"<artifactId>{module_name}</artifactId>" not in s:
     s = s.replace(needle, block + "\n    </dependencies>", 1)
+
 p.write_text(s, encoding="utf-8")
 PY
 }
@@ -113,6 +125,7 @@ PY
 sync_frontend_generated() {
   local frontend_root="$1"
   local found=0
+  local src_dir=""
 
   mkdir -p "${frontend_root}/src"
 
@@ -131,13 +144,13 @@ sync_frontend_generated() {
 sync_backend_generated() {
   local backend_root="$1"
   local found=0
+  local module_dir=""
+  local module_name=""
+  local target_module_dir=""
 
   while IFS= read -r module_dir; do
     [[ -n "${module_dir}" ]] || continue
     found=1
-
-    local module_name
-    local target_module_dir
 
     module_name="$(basename "${module_dir}")"
     target_module_dir="${backend_root}/${module_name}"
