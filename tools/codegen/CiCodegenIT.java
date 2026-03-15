@@ -58,7 +58,7 @@ public class CiCodegenIT {
         Path mergedErrorFile = outBase.resolve(
                 "yudao-module-" + moduleName
                         + "/src/main/java/cn/iocoder/yudao/module/" + moduleName
-                        + "/enums/AllGeneratedErrorCodes.java"
+                        + "/enums/ErrorCodeConstants.java"
         );
         Path singleErrorFile = outBase.resolve(
                 "yudao-module-" + moduleName
@@ -67,7 +67,7 @@ public class CiCodegenIT {
         );
 
         StringBuilder allErrors = new StringBuilder();
-        allErrors.append(buildAllGeneratedErrorCodesHeader(moduleName));
+        allErrors.append(buildErrorCodeConstantsHeader(moduleName));
 
         try (Connection conn = dataSource.getConnection()) {
             String schema = conn.getCatalog();
@@ -398,14 +398,14 @@ public class CiCodegenIT {
         return v;
     }
 
-    private static String buildAllGeneratedErrorCodesHeader(String moduleName) {
+    private static String buildErrorCodeConstantsHeader(String moduleName) {
         return "package cn.iocoder.yudao.module." + moduleName + ".enums;\n\n"
                 + "import cn.iocoder.yudao.framework.common.exception.ErrorCode;\n\n"
                 + "/**\n"
                 + " * 所有自动生成错误码汇总（临时编号）\n"
                 + " * 请按模块规划正式号段后，复制到 ErrorCodeConstants\n"
                 + " */\n"
-                + "public interface AllGeneratedErrorCodes {\n\n";
+                + "public interface ErrorCodeConstants {\n\n";
     }
 
     private static String extractConstants(String fileContent, String tableName) {
