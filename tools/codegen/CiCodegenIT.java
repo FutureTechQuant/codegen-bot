@@ -94,6 +94,44 @@ public class CiCodegenIT {
 
         System.out.println("codegenProperties.voType = " + codegenProperties.getVoType());
         System.out.println("codegenProperties.frontType = " + codegenProperties.getFrontType());
+
+        // ========== 合并所有错误码到一个文件 ==========
+        Path errorFile = outBase.resolve("yudao-module-" + moduleName + 
+            "/src/main/java/cn/iocoder/yudao/module/" + moduleName + "/enums/AllGeneratedErrorCodes.java");
+        Files.createDirectories(errorFile.getParent());
+        
+        StringBuilder allErrors = new StringBuilder();
+        allErrors.append("""
+            package cn.iocoder.yudao.module.""" + moduleName + """.enums;
+            
+            import cn.iocoder.yudao.framework.common.exception.ErrorCode;
+            
+            /**
+             * 所有自动生成错误码汇总（临时编号）
+             * 请按模块规划正式号段后，复制到 ErrorCodeConstants
+             */
+            public interface AllGeneratedErrorCodes {
+            
+            """);
+        
+        for (Long tableId : ids) {
+            CodegenTableDO table = codegenTableMapper.selectById(tableId);
+            // 读取刚才生成的 ErrorCodeConstants_手动操作.java
+            Path singleErrorFile = outBase.resolve("yudao-module-" + moduleName + 
+                "/src/main/java/cn/iocoder/yudao/module/" + moduleName + "/enums/ErrorCodeConstants_手动操作.java");
+            if (Files.exists(singleErrorFile)) {
+                String content = Files.readString(singleErrorFile, StandardCharsets.UTF_8);
+                // 提取 interface 内的常量定义（去掉包名、import、interface定义）
+                String constants = extractConstants(content, table.getClassName());
+                allErrors.append(constants).append("\n\n");
+                // 删除单个文件，避免混乱
+                Files.delete(singleErrorFile);
+            }
+        }
+        
+        allErrors.append("}");
+        Files.writeString(errorFile, allErrors.toString(), StandardCharsets.UTF_8);
+
     }
 
     private static void normalizeTable(CodegenTableDO table, String moduleName, String tablePrefix) {
@@ -367,4 +405,26 @@ public class CiCodegenIT {
         }
         return v;
     }
+
+        private static String extractConstants(String fileContent, String tableName) {
+            // 简单提取 interface 内的常量行，保留表名注释
+            String[] lines = fileContent.split("\n");
+            StringBuilder sb = new StringBuilder();
+            sb.append("// ========== ").append(tableName).append(" 表错误码 ==========\n");
+            boolean inInterface = false;
+            for (String line : lines) {
+                if (line.contains("public interface")) {
+                    inInterface = true;
+                    continue;
+                }
+                if (inInterface && line.trim().startsWith("ErrorCode")) {
+                    sb.append(line).append("\n");
+                }
+                if (line.contains("}")) {
+                    inInterface = false;
+                }
+            }
+            return sb.toString();
+        }
+
 }
