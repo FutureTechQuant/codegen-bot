@@ -76,6 +76,31 @@ cp "${ROOT_DIR}/tools/codegen/CiCodegenIT.java" \
 cp "${ROOT_DIR}/tools/codegen/application-ci-codegen.yaml" \
    "${RUOYI_DIR}/yudao-server/src/test/resources/application-ci-codegen.yaml"
 
+echo "== override ruoyi codegen templates =="
+
+# 本项目里的自定义模板根目录
+LOCAL_TPL_DIR="${ROOT_DIR}/tools/codegen/templates"
+
+# ruoyi 源码里的模板根目录（以当前 master-jdk17 为准）
+RUOYI_TPL_DIR="${RUOYI_DIR}/yudao-module-infra/src/main/resources/codegen"
+
+# 确认 ruoyi 模板目录存在
+if [[ ! -d "${RUOYI_TPL_DIR}" ]]; then
+  echo "ERROR: ruoyi codegen template dir not found: ${RUOYI_TPL_DIR}"
+  exit 1
+fi
+
+# 用你项目的模板覆盖 ruoyi 的模板（只覆盖你定义的文件）
+# 例如只覆盖 java/enums/errorcode.vm
+if [[ -f "${LOCAL_TPL_DIR}/java/enums/errorcode.vm" ]]; then
+  mkdir -p "${RUOYI_TPL_DIR}/java/enums"
+  cp "${LOCAL_TPL_DIR}/java/enums/errorcode.vm" \
+     "${RUOYI_TPL_DIR}/java/enums/errorcode.vm"
+  echo "overridden: ${RUOYI_TPL_DIR}/java/enums/errorcode.vm"
+else
+  echo "WARN: local errorcode.vm not found at ${LOCAL_TPL_DIR}/java/enums/errorcode.vm"
+fi
+
 echo "== verify copied files =="
 ls -l "${RUOYI_DIR}/yudao-server/src/test/java/ci/codegen/CiCodegenIT.java"
 ls -l "${RUOYI_DIR}/yudao-server/src/test/resources/application-ci-codegen.yaml"
