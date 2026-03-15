@@ -12,20 +12,20 @@ public interface ErrorCodeConstants_${simpleClassName_underlineCase.toUpperCase(
 
     // ========== ${table.classComment} 1-999-000-000（临时编号，后续需要改成模块号段） ==========
     ErrorCode ${simpleClassName_underlineCase.toUpperCase()}_NOT_EXISTS =
-            new ErrorCode(1_999_000_000L, "${table.classComment}不存在");
+            new ErrorCode(1_999_000_000, "${table.classComment}不存在");
 
     ## 特殊：树表专属逻辑
     #if ( $table.templateType == 2 )
     ErrorCode ${simpleClassName_underlineCase.toUpperCase()}_EXITS_CHILDREN =
-            new ErrorCode(1_999_000_001L, "存在存在子${table.classComment}，无法删除");
+            new ErrorCode(1_999_000_001, "存在存在子${table.classComment}，无法删除");
     ErrorCode ${simpleClassName_underlineCase.toUpperCase()}_PARENT_NOT_EXITS =
-            new ErrorCode(1_999_000_002L,"父级${table.classComment}不存在");
+            new ErrorCode(1_999_000_002,"父级${table.classComment}不存在");
     ErrorCode ${simpleClassName_underlineCase.toUpperCase()}_PARENT_ERROR =
-            new ErrorCode(1_999_000_003L, "不能设置自己为父${table.classComment}");
+            new ErrorCode(1_999_000_003, "不能设置自己为父${table.classComment}");
     ErrorCode ${simpleClassName_underlineCase.toUpperCase()}_${treeNameColumn_javaField_underlineCase.toUpperCase()}_DUPLICATE =
-            new ErrorCode(1_999_000_004L, "已经存在该${treeNameColumn.columnComment}的${table.classComment}");
+            new ErrorCode(1_999_000_004, "已经存在该${treeNameColumn.columnComment}的${table.classComment}");
     ErrorCode ${simpleClassName_underlineCase.toUpperCase()}_PARENT_IS_CHILD =
-            new ErrorCode(1_999_000_005L, "不能设置自己的子${table.className}为父${table.className}");
+            new ErrorCode(1_999_000_005, "不能设置自己的子${table.className}为父${table.className}");
     #end
 
     ## 特殊：主子表专属逻辑（ERP）
@@ -34,10 +34,10 @@ public interface ErrorCodeConstants_${simpleClassName_underlineCase.toUpperCase(
     #set ($index = $foreach.count - 1)
     #set ($simpleClassNameUnderlineCase = $simpleClassNameUnderlineCases.get($index))
     ErrorCode ${simpleClassNameUnderlineCase.toUpperCase()}_NOT_EXISTS =
-            new ErrorCode(1_999_000_100L + ${index}, "${subTable.classComment}不存在");
+            new ErrorCode(1_999_000_100 + ${index}, "${subTable.classComment}不存在");
     #if ( !$subTable.subJoinMany )
     ErrorCode ${simpleClassNameUnderlineCase.toUpperCase()}_EXISTS =
-            new ErrorCode(1_999_000_200L + ${index}, "${subTable.classComment}已存在");
+            new ErrorCode(1_999_000_200 + ${index}, "${subTable.classComment}已存在");
     #end
     #end
     #end
