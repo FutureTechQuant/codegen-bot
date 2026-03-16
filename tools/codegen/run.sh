@@ -153,5 +153,11 @@ if ! mvn -pl yudao-server -am \
   exit 1
 fi
 
+echo "== clone admin controllers to app controllers =="
+APP_KEEP_HTTP_METHODS="${APP_KEEP_HTTP_METHODS:-GET}" \
+APP_KEEP_METHOD_NAMES="${APP_KEEP_METHOD_NAMES:-}" \
+python3 "${ROOT_DIR}/tools/codegen/clone_admin_controller_to_app.py" \
+  --generated-dir "${CODEGEN_OUTPUT_DIR}"
+
 echo "== generated files =="
 find "${CODEGEN_OUTPUT_DIR}" -type f | sort || true
