@@ -16,20 +16,42 @@ def parse_args():
 
 
 def transform_header(text: str) -> str:
-    text = text.replace(".controller.admin.", ".controller.app.")
+    # 1) 只修改 package 行，不要全局替换，否则会误伤 import 的 admin.vo
+    text = re.sub(
+        r'^(package\s+.+?\.controller)\.admin(\..*;\s*)$',
+        r'\1.app\2',
+        text,
+        count=1,
+        flags=re.M
+    )
+
+    # 2) 类名改成 AppXXXController
     text = re.sub(
         r'public\s+class\s+([A-Z]\w*)Controller\b',
         r'public class App\1Controller',
         text,
         count=1
     )
+
+    # 3) Tag 文案改掉
     text = text.replace(TAG_FROM, TAG_TO)
+
+    # 4) 删除 PreAuthorize 的 import
     text = re.sub(
         r'^\s*import\s+org\.springframework\.security\.access\.prepost\.PreAuthorize;\s*$\n?',
         '',
         text,
         flags=re.M
     )
+
+    # 5) 如果之前有误替换，兜底把 import 中的 controller.app.xxx.vo 改回 controller.admin.xxx.vo
+    text = re.sub(
+        r'(^\s*import\s+.+?\.controller)\.app(\..*\.vo\..*;\s*$)',
+        r'\1.admin\2',
+        text,
+        flags=re.M
+    )
+
     return text
 
 
@@ -51,6 +73,7 @@ def extract_top_level_members(body: str):
     while i < n:
         ch = body[i]
 
+        # 到达 class 的结束大括号
         if level == 0 and ch == "}":
             if "".join(buf).strip():
                 members.append("".join(buf))
@@ -63,6 +86,7 @@ def extract_top_level_members(body: str):
         elif ch == "}":
             level -= 1
 
+        # 字段、注入成员等，以分号结束
         if ch == ";" and level == 0:
             i += 1
             while i < n and body[i] in " \t\r\n":
@@ -72,6 +96,7 @@ def extract_top_level_members(body: str):
             buf = []
             continue
 
+        # 方法结束
         if ch == "}" and level == 0:
             i += 1
             while i < n and body[i] in " \t\r\n":
@@ -115,13 +140,12 @@ def should_keep_method(block: str) -> bool:
 
 
 def strip_security_annotations(block: str) -> str:
-    block = re.sub(
+    return re.sub(
         r'^\s*@PreAuthorize\(.*?\)\s*$\n?',
         '',
         block,
         flags=re.M
     )
-    return block
 
 
 def cleanup(text: str) -> str:
@@ -135,6 +159,7 @@ def build_dst_rel(rel: Path) -> Path:
     s = s.replace("/controller/admin/", "/controller/app/")
     dst = Path(s)
 
+    # 文件名改成 AppXXXController.java
     if dst.name.endswith("Controller.java") and not dst.name.startswith("App"):
         dst = dst.with_name("App" + dst.name)
 
