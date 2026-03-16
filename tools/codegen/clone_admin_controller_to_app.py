@@ -1,44 +1,37 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import re
 from pathlib import Path
 
 TAG_FROM = '管理后台 - '
 TAG_TO = '用户 App - '
 
-DEFAULT_KEEP_HTTP = {"GET"}
+KEEP_ENDPOINTS = {"/create", "/update", "/delete", "/get", "/page"}
+
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--generated-dir", required=True)
     return p.parse_args()
 
-def getenv_set(name, default=None):
-    raw = os.getenv(name, "")
-    if not raw.strip():
-        return set(default or [])
-    return {x.strip() for x in raw.split(",") if x.strip()}
-
-KEEP_HTTP_METHODS = getenv_set("APP_KEEP_HTTP_METHODS", DEFAULT_KEEP_HTTP)
-KEEP_METHOD_NAMES = getenv_set("APP_KEEP_METHOD_NAMES", set())
-
-ANN_HTTP = {
-    "@GetMapping(": "GET",
-    "@PostMapping(": "POST",
-    "@PutMapping(": "PUT",
-    "@DeleteMapping(": "DELETE",
-    "@PatchMapping(": "PATCH",
-}
 
 def transform_header(text: str) -> str:
     text = text.replace(".controller.admin.", ".controller.app.")
-    text = re.sub(r'public\s+class\s+([A-Z]\w*)Controller\b',
-                  r'public class App\1Controller', text, count=1)
+    text = re.sub(
+        r'public\s+class\s+([A-Z]\w*)Controller\b',
+        r'public class App\1Controller',
+        text,
+        count=1
+    )
     text = text.replace(TAG_FROM, TAG_TO)
-    text = re.sub(r'^\s*import\s+org\.springframework\.security\.access\.prepost\.PreAuthorize;\s*$',
-                  '', text, flags=re.M)
+    text = re.sub(
+        r'^\s*import\s+org\.springframework\.security\.access\.prepost\.PreAuthorize;\s*$\n?',
+        '',
+        text,
+        flags=re.M
+    )
     return text
+
 
 def split_header_and_body(text: str):
     m = re.search(r'\bpublic\s+class\s+\w+\s*\{', text)
@@ -47,73 +40,119 @@ def split_header_and_body(text: str):
     brace_pos = text.find("{", m.start())
     return text[:brace_pos + 1], text[brace_pos + 1:]
 
-def extract_top_level_blocks(body: str):
-    blocks = []
+
+def extract_top_level_members(body: str):
+    members = []
     buf = []
     level = 0
     i = 0
-    while i < len(body):
+    n = len(body)
+
+    while i < n:
         ch = body[i]
+
+        if level == 0 and ch == "}":
+            if "".join(buf).strip():
+                members.append("".join(buf))
+            return members, body[i:]
+
         buf.append(ch)
+
         if ch == "{":
             level += 1
         elif ch == "}":
             level -= 1
-            if level < 0:
-                blocks.append("".join(buf[:-1]))
-                return blocks, "}"
-        elif ch == "\n" and level == 0:
-            s = "".join(buf)
-            if s.strip():
-                blocks.append(s)
+
+        if ch == ";" and level == 0:
+            i += 1
+            while i < n and body[i] in " \t\r\n":
+                buf.append(body[i])
+                i += 1
+            members.append("".join(buf))
             buf = []
+            continue
+
+        if ch == "}" and level == 0:
+            i += 1
+            while i < n and body[i] in " \t\r\n":
+                buf.append(body[i])
+                i += 1
+            members.append("".join(buf))
+            buf = []
+            continue
+
         i += 1
-    if buf and "".join(buf).strip():
-        blocks.append("".join(buf))
-    return blocks, ""
+
+    if "".join(buf).strip():
+        members.append("".join(buf))
+    return members, ""
+
 
 def looks_like_method(block: str) -> bool:
-    return "public " in block and "(" in block and ")" in block and "{" in block
+    return re.search(
+        r'\b(public|protected|private)\b[\s\S]*?\([^;\n{}]*\)\s*\{',
+        block
+    ) is not None
 
-def detect_http(block: str):
-    for k, v in ANN_HTTP.items():
-        if k in block:
-            return v
+
+def detect_mapping_path(block: str):
+    patterns = [
+        r'@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:value\s*=\s*)?"([^"]+)"',
+        r'@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:path\s*=\s*)?"([^"]+)"',
+        r'@RequestMapping\s*\(\s*(?:value\s*=\s*)?"([^"]+)"',
+        r'@RequestMapping\s*\(\s*(?:path\s*=\s*)?"([^"]+)"',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, block)
+        if m:
+            return m.group(m.lastindex)
     return None
 
-def detect_method_name(block: str):
-    m = re.search(r'public\s+[<>\w\[\], ?]+\s+(\w+)\s*\(', block)
-    return m.group(1) if m else None
 
 def should_keep_method(block: str) -> bool:
-    name = detect_method_name(block)
-    if name in KEEP_METHOD_NAMES:
-        return True
-    if "@PreAuthorize(" in block:
-        return False
-    http = detect_http(block)
-    if http and http not in KEEP_HTTP_METHODS:
-        return False
-    return http in KEEP_HTTP_METHODS
+    path = detect_mapping_path(block)
+    return path in KEEP_ENDPOINTS
+
+
+def strip_security_annotations(block: str) -> str:
+    block = re.sub(
+        r'^\s*@PreAuthorize\(.*?\)\s*$\n?',
+        '',
+        block,
+        flags=re.M
+    )
+    return block
+
 
 def cleanup(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'[ \t]+\n', '\n', text)
     return text.strip() + "\n"
 
+
+def build_dst_rel(rel: Path) -> Path:
+    s = str(rel).replace("\\", "/")
+    s = s.replace("/controller/admin/", "/controller/app/")
+    dst = Path(s)
+
+    if dst.name.endswith("Controller.java") and not dst.name.startswith("App"):
+        dst = dst.with_name("App" + dst.name)
+
+    return dst
+
+
 def convert_one_file(src: Path, dst: Path):
     text = src.read_text(encoding="utf-8")
     text = transform_header(text)
 
     header, body = split_header_and_body(text)
-    blocks, tail = extract_top_level_blocks(body)
+    members, tail = extract_top_level_members(body)
 
     kept = []
-    for block in blocks:
+    for block in members:
         if looks_like_method(block):
             if should_keep_method(block):
-                block = re.sub(r'^\s*@PreAuthorize\(.*?\)\s*$\n?', '', block, flags=re.M)
-                kept.append(block)
+                kept.append(strip_security_annotations(block))
         else:
             kept.append(block)
 
@@ -122,6 +161,7 @@ def convert_one_file(src: Path, dst: Path):
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(result, encoding="utf-8")
+
 
 def main():
     args = parse_args()
@@ -133,15 +173,18 @@ def main():
         path_str = str(src).replace("\\", "/")
         if "/controller/admin/" not in path_str:
             continue
+        if not src.name.endswith("Controller.java"):
+            continue
 
         rel = src.relative_to(root)
-        dst_rel = Path(str(rel).replace("/controller/admin/", "/controller/app/"))
+        dst_rel = build_dst_rel(rel)
         dst = root / dst_rel
 
         convert_one_file(src, dst)
         count += 1
 
     print(f"generated app controllers: {count}")
+
 
 if __name__ == "__main__":
     main()
