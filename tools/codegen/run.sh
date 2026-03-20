@@ -54,6 +54,15 @@ if [[ ! -d "${SQL_ROOT}" ]]; then
   exit 1
 fi
 
+echo "== check business tables =="
+mysql_exec "${CODEGEN_DB_NAME}" -e "SHOW TABLES LIKE 'talent_%';" || true
+
+echo "== check all tables count =="
+mysql_exec "${CODEGEN_DB_NAME}" -e "SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_schema = '${CODEGEN_DB_NAME}';" || true
+
+echo "== check prefixed tables count =="
+mysql_exec "${CODEGEN_DB_NAME}" -e "SELECT table_name FROM information_schema.tables WHERE table_schema = '${CODEGEN_DB_NAME}' AND table_name LIKE 'talent\_%' ORDER BY table_name;" || true
+
 mapfile -t SQL_FILES < <(find "${SQL_ROOT}" -type f -name '*.sql' | sort)
 
 if [[ ${#SQL_FILES[@]} -eq 0 ]]; then
