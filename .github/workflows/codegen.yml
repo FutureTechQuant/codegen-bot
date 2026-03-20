@@ -51,7 +51,6 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v5
 
-      # 用 Gitee 的 ruoyi 作为代码生成引擎（也可以继续用 GitHub 版，看你需要）
       - name: Checkout ruoyi-vue-pro for codegen engine
         uses: actions/checkout@v5
         with:
@@ -71,7 +70,31 @@ jobs:
       - name: Install runtime tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y mysql-client python3 redis-tools git jq
+          sudo apt-get install -y mysql-client python3 redis-tools git jq tree
+
+      - name: Debug workspace before run
+        run: |
+          set -x
+          echo "github.workspace=${GITHUB_WORKSPACE}"
+          echo "runner.os=${RUNNER_OS}"
+          echo "pwd=$(pwd)"
+          whoami
+          uname -a
+          java -version
+          mvn -version
+          python3 --version
+          git --version
+          jq --version
+          mysql --version
+          redis-cli --version || true
+          echo "== top level =="
+          ls -la
+          echo "== workspace tree depth 3 =="
+          find "${GITHUB_WORKSPACE}" -maxdepth 3 -mindepth 1 | sort | sed -n '1,300p'
+          echo "== key files =="
+          ls -la "${GITHUB_WORKSPACE}/tools/codegen" || true
+          ls -la "${GITHUB_WORKSPACE}/sql" || true
+          ls -la "${GITHUB_WORKSPACE}/ruoyi" || true
 
       - name: Wait MySQL
         run: |
@@ -91,6 +114,13 @@ jobs:
           echo "Redis not ready"
           exit 1
 
+      - name: Debug services
+        run: |
+          set -x
+          mysqladmin ping -h 127.0.0.1 -proot
+          redis-cli -h 127.0.0.1 -p 6379 ping
+          ss -lntp | grep -E ':3306|:6379' || true
+
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -100,6 +130,7 @@ jobs:
           owner: FutureTechQuant
 
       - name: Run codegen
+        id: run-codegen
         env:
           MYSQL_HOST: 127.0.0.1
           MYSQL_PORT: 3306
@@ -113,21 +144,81 @@ jobs:
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
         run: |
+          set -x
+          echo "CODEGEN_OUTPUT_DIR=${CODEGEN_OUTPUT_DIR}"
+          echo "== before run =="
+          ls -la "${GITHUB_WORKSPACE}" || true
+          ls -la "${GITHUB_WORKSPACE}/out" || true
           bash tools/codegen/run.sh
 
+      - name: Debug after codegen
+        if: always()
+        run: |
+          set +e
+          echo "== run-codegen conclusion =="
+          echo "${{ steps.run-codegen.conclusion }}"
+          echo "== pwd/workspace =="
+          pwd
+          echo "${GITHUB_WORKSPACE}"
+          echo "== out dir =="
+          ls -la "${GITHUB_WORKSPACE}/out" || true
+          echo "== generated dir =="
+          ls -la "${GITHUB_WORKSPACE}/out/generated" || true
+          echo "== generated files =="
+          find "${GITHUB_WORKSPACE}/out/generated" -type f | sort | sed -n '1,300p' || true
+          echo "== directories related to out/generated/ruoyi =="
+          find "${GITHUB_WORKSPACE}" -maxdepth 5 -type d | sort | grep -E '/out|generated|ruoyi|surefire-reports' || true
+          echo "== surefire reports =="
+          find "${GITHUB_WORKSPACE}/ruoyi" -path '*/surefire-reports/*' -type f | sort | sed -n '1,200p' || true
+          echo "== tail possible reports =="
+          for f in $(find "${GITHUB_WORKSPACE}/ruoyi" -path '*/surefire-reports/*' -type f | sort | head -20); do
+            echo "----- $f -----"
+            sed -n '1,200p' "$f" || true
+          done
+
       - name: Publish generated code
+        if: ${{ steps.run-codegen.conclusion == 'success' }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_OWNER: FutureTechQuant
           BACKEND_BRANCH: master-jdk17
         run: |
+          set -x
+          echo "== before publish =="
+          ls -la "${GITHUB_WORKSPACE}/out" || true
+          ls -la "${GITHUB_WORKSPACE}/out/generated" || true
+          find "${GITHUB_WORKSPACE}/out/generated" -type f | sort | sed -n '1,200p' || true
           bash tools/codegen/publish.sh
+
+      - name: Debug after publish
+        if: always()
+        run: |
+          set +e
+          echo "== publish workspace snapshot =="
+          pwd
+          ls -la "${GITHUB_WORKSPACE}" || true
+          ls -la "${GITHUB_WORKSPACE}/out" || true
+          ls -la "${GITHUB_WORKSPACE}/out/generated" || true
+          ls -la "${GITHUB_WORKSPACE}/out/publish" || true
+          find "${GITHUB_WORKSPACE}/out" -maxdepth 4 | sort | sed -n '1,300p' || true
 
       - name: Upload generated code
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: generated-code
-          path: out/generated
-          if-no-files-found: error
+          path: |
+            ${{ github.workspace }}/out/generated
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload debug logs
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: codegen-debug-files
+          path: |
+            ${{ github.workspace }}/out
+            ${{ github.workspace }}/ruoyi/yudao-server/target/surefire-reports
+          if-no-files-found: warn
           retention-days: 7
