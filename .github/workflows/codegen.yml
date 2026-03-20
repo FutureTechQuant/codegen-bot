@@ -137,12 +137,13 @@ jobs:
           MYSQL_USER: root
           MYSQL_PWD: root
           CODEGEN_DB_NAME: ruoyi-vue-pro
-          CODEGEN_MODULE_NAME: talent
-          CODEGEN_TABLE_PREFIX: talent_
           CODEGEN_OUTPUT_DIR: ${{ github.workspace }}/out/generated
           CODEGEN_BASE_PACKAGE: cn.iocoder.yudao
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
+          # 如需强制指定，可手工打开下面两行
+          # CODEGEN_MODULE_NAME: trade
+          # CODEGEN_TABLE_PREFIX: trade_
         run: |
           set -x
           echo "CODEGEN_OUTPUT_DIR=${CODEGEN_OUTPUT_DIR}"
