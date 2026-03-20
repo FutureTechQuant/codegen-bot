@@ -10,17 +10,14 @@ MYSQL_USER="${MYSQL_USER:-root}"
 MYSQL_PWD="${MYSQL_PWD:-root}"
 
 CODEGEN_DB_NAME="${CODEGEN_DB_NAME:-ruoyi-vue-pro}"
-CODEGEN_MODULE_NAME="${CODEGEN_MODULE_NAME:-talent}"
-CODEGEN_TABLE_PREFIX="${CODEGEN_TABLE_PREFIX:-${CODEGEN_MODULE_NAME}_}"
+CODEGEN_MODULE_NAME="${CODEGEN_MODULE_NAME:-}"
+CODEGEN_TABLE_PREFIX="${CODEGEN_TABLE_PREFIX:-}"
 CODEGEN_BASE_PACKAGE="${CODEGEN_BASE_PACKAGE:-cn.iocoder.yudao}"
 CODEGEN_OUTPUT_DIR="${CODEGEN_OUTPUT_DIR:-${ROOT_DIR}/out/generated}"
 
 DB_URL="${DB_URL:-jdbc:mysql://${MYSQL_HOST}:${MYSQL_PORT}/${CODEGEN_DB_NAME}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&nullCatalogMeansCurrent=true}"
 DB_USER="${DB_USER:-${MYSQL_USER}}"
 DB_PWD="${DB_PWD:-${MYSQL_PWD}}"
-
-export DB_URL DB_USER DB_PWD
-export CODEGEN_DB_NAME CODEGEN_OUTPUT_DIR CODEGEN_MODULE_NAME CODEGEN_TABLE_PREFIX CODEGEN_BASE_PACKAGE
 
 mysql_exec() {
   MYSQL_PWD="${MYSQL_PWD}" mysql \
@@ -47,21 +44,23 @@ if [[ ! -f "${BASE_SQL}" ]]; then
 fi
 mysql_exec "${CODEGEN_DB_NAME}" < "${BASE_SQL}"
 
+echo "== snapshot base tables =="
+mapfile -t BASE_TABLES < <(
+  mysql_exec -N -B -e "
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = '${CODEGEN_DB_NAME}'
+      AND table_type = 'BASE TABLE'
+    ORDER BY table_name
+  "
+)
+
 echo "== import business sql from this repo =="
 SQL_ROOT="${ROOT_DIR}/sql/schema"
 if [[ ! -d "${SQL_ROOT}" ]]; then
   echo "ERROR: missing business sql dir: ${SQL_ROOT}"
   exit 1
 fi
-
-echo "== check business tables =="
-mysql_exec "${CODEGEN_DB_NAME}" -e "SHOW TABLES LIKE 'talent_%';" || true
-
-echo "== check all tables count =="
-mysql_exec "${CODEGEN_DB_NAME}" -e "SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_schema = '${CODEGEN_DB_NAME}';" || true
-
-echo "== check prefixed tables count =="
-mysql_exec "${CODEGEN_DB_NAME}" -e "SELECT table_name FROM information_schema.tables WHERE table_schema = '${CODEGEN_DB_NAME}' AND table_name LIKE 'talent\_%' ORDER BY table_name;" || true
 
 mapfile -t SQL_FILES < <(find "${SQL_ROOT}" -type f -name '*.sql' | sort)
 
@@ -75,6 +74,94 @@ for f in "${SQL_FILES[@]}"; do
   mysql_exec "${CODEGEN_DB_NAME}" < "${f}"
 done
 
+echo "== snapshot all tables after business import =="
+mapfile -t ALL_TABLES < <(
+  mysql_exec -N -B -e "
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = '${CODEGEN_DB_NAME}'
+      AND table_type = 'BASE TABLE'
+    ORDER BY table_name
+  "
+)
+
+echo "== detect newly added business tables =="
+declare -A BASE_TABLE_SET=()
+for t in "${BASE_TABLES[@]}"; do
+  BASE_TABLE_SET["$t"]=1
+done
+
+NEW_TABLES=()
+for t in "${ALL_TABLES[@]}"; do
+  if [[ -z "${BASE_TABLE_SET[$t]+x}" ]]; then
+    NEW_TABLES+=("$t")
+  fi
+done
+
+if [[ ${#NEW_TABLES[@]} -eq 0 ]]; then
+  echo "ERROR: no new business tables detected after importing ${SQL_ROOT}"
+  exit 1
+fi
+
+printf 'new table -> %s\n' "${NEW_TABLES[@]}"
+
+if [[ -z "${CODEGEN_TABLE_PREFIX}" ]]; then
+  PREFIXES=()
+  declare -A PREFIX_SEEN=()
+
+  for t in "${NEW_TABLES[@]}"; do
+    prefix="${t%%_*}"
+    if [[ "${prefix}" == "${t}" ]]; then
+      echo "ERROR: cannot infer table prefix from table without underscore: ${t}"
+      exit 1
+    fi
+    prefix="${prefix}_"
+    if [[ -z "${PREFIX_SEEN[$prefix]+x}" ]]; then
+      PREFIX_SEEN["$prefix"]=1
+      PREFIXES+=("$prefix")
+    fi
+  done
+
+  if [[ ${#PREFIXES[@]} -ne 1 ]]; then
+    echo "ERROR: multiple table prefixes detected from sql/schema: ${PREFIXES[*]}"
+    echo "Please set CODEGEN_TABLE_PREFIX explicitly."
+    exit 1
+  fi
+
+  CODEGEN_TABLE_PREFIX="${PREFIXES[0]}"
+fi
+
+if [[ -z "${CODEGEN_MODULE_NAME}" ]]; then
+  CODEGEN_MODULE_NAME="${CODEGEN_TABLE_PREFIX%_}"
+fi
+
+export DB_URL DB_USER DB_PWD
+export CODEGEN_DB_NAME CODEGEN_OUTPUT_DIR CODEGEN_MODULE_NAME CODEGEN_TABLE_PREFIX CODEGEN_BASE_PACKAGE
+
+echo "== resolved codegen config =="
+echo "CODEGEN_MODULE_NAME=${CODEGEN_MODULE_NAME}"
+echo "CODEGEN_TABLE_PREFIX=${CODEGEN_TABLE_PREFIX}"
+
+echo "== check all tables count =="
+mysql_exec -e "
+  SELECT COUNT(*) AS cnt
+  FROM information_schema.tables
+  WHERE table_schema = '${CODEGEN_DB_NAME}'
+    AND table_type = 'BASE TABLE'
+" || true
+
+ESCAPED_PREFIX="${CODEGEN_TABLE_PREFIX//_/\\_}"
+
+echo "== check prefixed tables count =="
+mysql_exec -e "
+  SELECT table_name
+  FROM information_schema.tables
+  WHERE table_schema = '${CODEGEN_DB_NAME}'
+    AND table_type = 'BASE TABLE'
+    AND table_name LIKE '${ESCAPED_PREFIX}%'
+  ORDER BY table_name
+" || true
+
 echo "== install integration test into ruoyi =="
 mkdir -p "${RUOYI_DIR}/yudao-server/src/test/java/ci/codegen"
 mkdir -p "${RUOYI_DIR}/yudao-server/src/test/resources"
@@ -87,20 +174,14 @@ cp "${ROOT_DIR}/tools/codegen/application-ci-codegen.yaml" \
 
 echo "== override ruoyi codegen templates =="
 
-# 本项目里的自定义模板根目录
 LOCAL_TPL_DIR="${ROOT_DIR}/tools/codegen/templates"
-
-# ruoyi 源码里的模板根目录（以当前 master-jdk17 为准）
 RUOYI_TPL_DIR="${RUOYI_DIR}/yudao-module-infra/src/main/resources/codegen"
 
-# 确认 ruoyi 模板目录存在
 if [[ ! -d "${RUOYI_TPL_DIR}" ]]; then
   echo "ERROR: ruoyi codegen template dir not found: ${RUOYI_TPL_DIR}"
   exit 1
 fi
 
-# 用你项目的模板覆盖 ruoyi 的模板（只覆盖你定义的文件）
-# 例如只覆盖 java/enums/errorcode.vm
 if [[ -f "${LOCAL_TPL_DIR}/java/enums/errorcode.vm" ]]; then
   mkdir -p "${RUOYI_TPL_DIR}/java/enums"
   cp "${LOCAL_TPL_DIR}/java/enums/errorcode.vm" \
@@ -144,7 +225,7 @@ if "spring-boot-starter-test" not in text:
 PY
 
 echo "== verify pom patch =="
-grep -n "spring-boot-starter-test\\|junit-jupiter" "${RUOYI_DIR}/yudao-server/pom.xml" || true
+grep -n "spring-boot-starter-test\|junit-jupiter" "${RUOYI_DIR}/yudao-server/pom.xml" || true
 
 echo "== run codegen integration test =="
 cd "${RUOYI_DIR}"
@@ -170,3 +251,8 @@ python3 "${ROOT_DIR}/tools/codegen/clone_admin_controller_to_app.py" \
 
 echo "== generated files =="
 find "${CODEGEN_OUTPUT_DIR}" -type f | sort || true
+
+if ! find "${CODEGEN_OUTPUT_DIR}" -type f | grep -q .; then
+  echo "ERROR: no generated files under ${CODEGEN_OUTPUT_DIR}"
+  exit 1
+fi
