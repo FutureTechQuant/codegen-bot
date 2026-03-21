@@ -150,7 +150,7 @@ mysql_exec -e "
     AND table_type = 'BASE TABLE'
 " || true
 
-ESCAPED_PREFIX="${CODEGEN_TABLE_PREFIX//_/\\_}"
+ESCAPED_PREFIX="${CODEGEN_TABLE_PREFIX//_/\\\\_}"
 
 echo "== check prefixed tables count =="
 mysql_exec -e "
@@ -252,7 +252,8 @@ python3 "${ROOT_DIR}/tools/codegen/clone_admin_controller_to_app.py" \
 echo "== generated files =="
 find "${CODEGEN_OUTPUT_DIR}" -type f | sort || true
 
-if ! find "${CODEGEN_OUTPUT_DIR}" -type f | grep -q .; then
+FIRST_GENERATED_FILE="$(find "${CODEGEN_OUTPUT_DIR}" -type f -print -quit)"
+if [[ -z "${FIRST_GENERATED_FILE}" ]]; then
   echo "ERROR: no generated files under ${CODEGEN_OUTPUT_DIR}"
   exit 1
 fi
