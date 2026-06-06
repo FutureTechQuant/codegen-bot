@@ -12,6 +12,7 @@ MYSQL_PWD="${MYSQL_PWD:-root}"
 CODEGEN_DB_NAME="${CODEGEN_DB_NAME:-ruoyi-vue-pro}"
 CODEGEN_MODULE_NAME="${CODEGEN_MODULE_NAME:-}"
 CODEGEN_TABLE_PREFIX="${CODEGEN_TABLE_PREFIX:-}"
+CODEGEN_MODULES="${CODEGEN_MODULES:-}"
 CODEGEN_BASE_PACKAGE="${CODEGEN_BASE_PACKAGE:-cn.iocoder.yudao}"
 CODEGEN_OUTPUT_DIR="${CODEGEN_OUTPUT_DIR:-${ROOT_DIR}/out/generated}"
 
@@ -105,8 +106,60 @@ fi
 
 printf 'new table -> %s\n' "${NEW_TABLES[@]}"
 
-if [[ -z "${CODEGEN_TABLE_PREFIX}" ]]; then
-  PREFIXES=()
+declare -a GENERATE_MODULE_NAMES=()
+declare -a GENERATE_TABLE_PREFIXES=()
+declare -A GENERATE_MODULE_SEEN=()
+
+add_codegen_module() {
+  local module_name="$1"
+  local table_prefix="$2"
+  local key="${module_name}:${table_prefix}"
+
+  if [[ -z "${module_name}" ]]; then
+    echo "ERROR: empty codegen module name"
+    exit 1
+  fi
+  if [[ -z "${table_prefix}" ]]; then
+    echo "ERROR: empty table prefix for module ${module_name}"
+    exit 1
+  fi
+  if [[ -n "${GENERATE_MODULE_SEEN[$key]+x}" ]]; then
+    return
+  fi
+
+  GENERATE_MODULE_SEEN["$key"]=1
+  GENERATE_MODULE_NAMES+=("${module_name}")
+  GENERATE_TABLE_PREFIXES+=("${table_prefix}")
+}
+
+if [[ -n "${CODEGEN_MODULES}" ]]; then
+  MODULE_SPECS="${CODEGEN_MODULES//,/ }"
+  MODULE_SPECS="${MODULE_SPECS//;/ }"
+
+  for spec in ${MODULE_SPECS}; do
+    if [[ "${spec}" == *":"* ]]; then
+      module_name="${spec%%:*}"
+      table_prefix="${spec#*:}"
+    elif [[ "${spec}" == *"="* ]]; then
+      module_name="${spec%%=*}"
+      table_prefix="${spec#*=}"
+    else
+      module_name="${spec}"
+      table_prefix="${spec}_"
+    fi
+
+    add_codegen_module "${module_name}" "${table_prefix}"
+  done
+elif [[ -n "${CODEGEN_MODULE_NAME}" || -n "${CODEGEN_TABLE_PREFIX}" ]]; then
+  if [[ -z "${CODEGEN_TABLE_PREFIX}" ]]; then
+    CODEGEN_TABLE_PREFIX="${CODEGEN_MODULE_NAME}_"
+  fi
+  if [[ -z "${CODEGEN_MODULE_NAME}" ]]; then
+    CODEGEN_MODULE_NAME="${CODEGEN_TABLE_PREFIX%_}"
+  fi
+
+  add_codegen_module "${CODEGEN_MODULE_NAME}" "${CODEGEN_TABLE_PREFIX}"
+else
   declare -A PREFIX_SEEN=()
 
   for t in "${NEW_TABLES[@]}"; do
@@ -118,29 +171,23 @@ if [[ -z "${CODEGEN_TABLE_PREFIX}" ]]; then
     prefix="${prefix}_"
     if [[ -z "${PREFIX_SEEN[$prefix]+x}" ]]; then
       PREFIX_SEEN["$prefix"]=1
-      PREFIXES+=("$prefix")
+      add_codegen_module "${prefix%_}" "${prefix}"
     fi
   done
-
-  if [[ ${#PREFIXES[@]} -ne 1 ]]; then
-    echo "ERROR: multiple table prefixes detected from sql/schema: ${PREFIXES[*]}"
-    echo "Please set CODEGEN_TABLE_PREFIX explicitly."
-    exit 1
-  fi
-
-  CODEGEN_TABLE_PREFIX="${PREFIXES[0]}"
 fi
 
-if [[ -z "${CODEGEN_MODULE_NAME}" ]]; then
-  CODEGEN_MODULE_NAME="${CODEGEN_TABLE_PREFIX%_}"
+if [[ ${#GENERATE_MODULE_NAMES[@]} -eq 0 ]]; then
+  echo "ERROR: no codegen modules resolved"
+  exit 1
 fi
 
 export DB_URL DB_USER DB_PWD
-export CODEGEN_DB_NAME CODEGEN_OUTPUT_DIR CODEGEN_MODULE_NAME CODEGEN_TABLE_PREFIX CODEGEN_BASE_PACKAGE
+export CODEGEN_DB_NAME CODEGEN_OUTPUT_DIR CODEGEN_BASE_PACKAGE
 
-echo "== resolved codegen config =="
-echo "CODEGEN_MODULE_NAME=${CODEGEN_MODULE_NAME}"
-echo "CODEGEN_TABLE_PREFIX=${CODEGEN_TABLE_PREFIX}"
+echo "== resolved codegen modules =="
+for i in "${!GENERATE_MODULE_NAMES[@]}"; do
+  echo "module=${GENERATE_MODULE_NAMES[$i]} prefix=${GENERATE_TABLE_PREFIXES[$i]}"
+done
 
 echo "== check all tables count =="
 mysql_exec -e "
@@ -150,17 +197,32 @@ mysql_exec -e "
     AND table_type = 'BASE TABLE'
 " || true
 
-ESCAPED_PREFIX="${CODEGEN_TABLE_PREFIX//_/\\\\_}"
+echo "== check module table counts =="
+for i in "${!GENERATE_MODULE_NAMES[@]}"; do
+  module_name="${GENERATE_MODULE_NAMES[$i]}"
+  table_prefix="${GENERATE_TABLE_PREFIXES[$i]}"
+  escaped_prefix="${table_prefix//_/\\\\_}"
 
-echo "== check prefixed tables count =="
-mysql_exec -e "
-  SELECT table_name
-  FROM information_schema.tables
-  WHERE table_schema = '${CODEGEN_DB_NAME}'
-    AND table_type = 'BASE TABLE'
-    AND table_name LIKE '${ESCAPED_PREFIX}%'
-  ORDER BY table_name
-" || true
+  mapfile -t PREFIX_TABLES < <(
+    mysql_exec -N -B -e "
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = '${CODEGEN_DB_NAME}'
+        AND table_type = 'BASE TABLE'
+        AND table_name LIKE '${escaped_prefix}%'
+      ORDER BY table_name
+    "
+  )
+
+  if [[ ${#PREFIX_TABLES[@]} -eq 0 ]]; then
+    echo "ERROR: no tables found for module=${module_name}, prefix=${table_prefix}"
+    exit 1
+  fi
+
+  for table_name in "${PREFIX_TABLES[@]}"; do
+    printf 'module=%s table -> %s\n' "${module_name}" "${table_name}"
+  done
+done
 
 echo "== install integration test into ruoyi =="
 mkdir -p "${RUOYI_DIR}/yudao-server/src/test/java/ci/codegen"
@@ -227,21 +289,32 @@ PY
 echo "== verify pom patch =="
 grep -n "spring-boot-starter-test\|junit-jupiter" "${RUOYI_DIR}/yudao-server/pom.xml" || true
 
-echo "== run codegen integration test =="
-cd "${RUOYI_DIR}"
-if ! mvn -pl yudao-server -am \
-  -Dtest=ci.codegen.CiCodegenIT \
-  -Dsurefire.failIfNoSpecifiedTests=false \
-  test; then
-  echo "== surefire reports =="
-  find yudao-server/target/surefire-reports -maxdepth 1 -type f | sort | while read -r f; do
-    echo "--------------------------------------------------"
-    echo "FILE: $f"
-    echo "--------------------------------------------------"
-    sed -n '1,240p' "$f" || true
-  done
-  exit 1
-fi
+for i in "${!GENERATE_MODULE_NAMES[@]}"; do
+  CODEGEN_MODULE_NAME="${GENERATE_MODULE_NAMES[$i]}"
+  CODEGEN_TABLE_PREFIX="${GENERATE_TABLE_PREFIXES[$i]}"
+  export CODEGEN_MODULE_NAME CODEGEN_TABLE_PREFIX
+
+  echo "== run codegen integration test =="
+  echo "CODEGEN_MODULE_NAME=${CODEGEN_MODULE_NAME}"
+  echo "CODEGEN_TABLE_PREFIX=${CODEGEN_TABLE_PREFIX}"
+
+  if ! (
+    cd "${RUOYI_DIR}"
+    mvn -pl yudao-server -am \
+      -Dtest=ci.codegen.CiCodegenIT \
+      -Dsurefire.failIfNoSpecifiedTests=false \
+      test
+  ); then
+    echo "== surefire reports =="
+    find "${RUOYI_DIR}/yudao-server/target/surefire-reports" -maxdepth 1 -type f | sort | while read -r f; do
+      echo "--------------------------------------------------"
+      echo "FILE: $f"
+      echo "--------------------------------------------------"
+      sed -n '1,240p' "$f" || true
+    done
+    exit 1
+  fi
+done
 
 echo "== clone admin controllers to app controllers =="
 APP_KEEP_HTTP_METHODS="${APP_KEEP_HTTP_METHODS:-GET}" \
